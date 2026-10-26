@@ -29,6 +29,8 @@
 需要 Node.js **22.13.0 或以上**及 npm。克隆仓库并进入项目目录后安装依赖：
 
 ```bash
+git clone https://github.com/ayogggua/xiachedan.git
+cd xiachedan
 npm ci
 ```
 
