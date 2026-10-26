@@ -106,6 +106,6 @@ if (gotLock) {
     if (quitting) return;
     quitting = true;
     menuBar?.destroy();
-    if (localServer) { event.preventDefault(); localServer.close().finally(() => app.quit()); }
+    if (localServer) { event.preventDefault(); localServer.close().finally(() => app.exit(0)); }
   });
 }
