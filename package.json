@@ -1,0 +1,31 @@
+{
+  "name": "linliao",
+  "version": "1.2.1",
+  "private": true,
+  "license": "MIT",
+  "description": "虾扯蛋 · 有事说事，没事虾扯蛋。",
+  "type": "module",
+  "main": "desktop/main.cjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "vite build",
+    "start": "node server/index.js",
+    "desktop": "npm run build && install-electron && electron .",
+    "package:mac": "npm run build && node desktop/package.mjs"
+  },
+  "dependencies": {
+    "express": "5.3.0",
+    "multer": "2.5.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "45.0.0",
+    "lucide-react": "^0.468.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "vite": "^7.3.1"
+  }
+}

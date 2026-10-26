@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+.data/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.pem
+*.key
+designs/**/_d_meta.json
