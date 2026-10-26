@@ -4,6 +4,8 @@
 
 # 虾扯蛋
 
+[![Build and Release](https://github.com/ayogggua/xiachedan/actions/workflows/build.yml/badge.svg)](https://github.com/ayogggua/xiachedan/actions/workflows/build.yml)
+
 有事说事，没事虾扯蛋。
 
 一个面向局域网的轻量聊天工具。由一台电脑创建空间，同一网络里的朋友通过邀请加入，聊工作、发图片、分享视频。提供 React 网页界面和 Electron 桌面端，当前包含 macOS 打包支持。
@@ -16,6 +18,8 @@
 - 自定义昵称和头像，通过完整邀请信息加入空间。
 - 隐私模式隐藏聊天内容，macOS 菜单栏常驻与新消息提醒。
 - 空间创建者可以移除成员，移除后自动更新邀请码。
+- 右键撤回自己发送的消息，同时清除原文和附件，更新已读状态与桌面通知。
+- 空间创建者可以查看存储占用，清空整个空间的聊天记录和已发送附件，保留成员、头像和群聊。
 - 使用 SQLite 保存消息，附件存储在空间主机上，无需外部数据库。
 
 ## 界面预览
@@ -75,6 +79,14 @@ MAC_ARCH=arm64 npm run package:mac
 ```
 
 当前打包脚本使用本地临时签名，不包含 Apple 开发者签名或公证流程。
+
+## 自动构建与发布
+
+[GitHub Actions](https://github.com/ayogggua/xiachedan/actions/workflows/build.yml) 在提交到 `main` 时自动检查代码、构建网页端，并分别生成 Apple Silicon（`arm64`）和 Intel（`x64`）Mac 安装包。Pull Request 运行检查和网页构建，也可以从 Actions 页面手动运行完整构建。
+
+运行成功后，在对应任务的 Artifacts 中下载 `xiachedan-mac-arm64` 或 `xiachedan-mac-x64`，其中包含 DMG 和 ZIP，保留 14 天。`web-dist` 是网页静态资源，需要配合本项目服务端运行。
+
+发布正式版本时，先更新 `package.json` 和 `package-lock.json` 中的版本，再推送对应的 `v版本号` 标签（如 `v1.3.0`）。工作流会校验版本号，打包成功后自动创建 [GitHub Release](https://github.com/ayogggua/xiachedan/releases) 并上传两种架构的安装包。
 
 ## 项目结构
 

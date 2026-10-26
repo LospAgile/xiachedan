@@ -1,24 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, Wifi, WifiOff, UserPlus, ChevronDown, ChevronRight, ArrowDown, X, Radio, ShieldCheck, Check, LoaderCircle, RefreshCw } from 'lucide-react';
 import { api, formatTime, mediaUrl } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview } from './components';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu } from './components';
 import Onboarding from './Onboarding';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog } from './dialogs';
 import useUnread from './useUnread';
 import useMessageReads from './useMessageReads';
 
-const merge = (a, b) => {
+const sanitizeMessage = (message, history) => !message || message.seq <= history.throughSeq ? null :
+  (message.recalledAt || history.recalls.has(message.id)) ? { ...message, recalledAt: message.recalledAt || history.recalls.get(message.id), text: '', attachments: [], readBy: [] } : message;
+const sanitizeState = (state, history) => ({ ...state, rooms: state.rooms.map(room => ({ ...room, lastMessage: sanitizeMessage(room.lastMessage, history) })) });
+const merge = (a, b, history) => {
   const messages = new Map(a.map(message => [message.id, message]));
   for (const message of b) {
     const previous = messages.get(message.id);
-    messages.set(message.id, { ...previous, ...message,
+    messages.set(message.id, { ...previous, ...message, recalledAt: previous?.recalledAt || message.recalledAt,
       ...(previous?.readBy || message.readBy ? { readBy: [...new Set([...(previous?.readBy || []), ...(message.readBy || [])])] } : {}) });
   }
-  return [...messages.values()].sort((a, b) => a.seq - b.seq);
+  return [...messages.values()].map(message => sanitizeMessage(message, history)).filter(Boolean).sort((a, b) => a.seq - b.seq);
 };
 const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
-const previewText = message => message ? message.text || (message.attachments.some(file => file.mime.startsWith('video/')) ? '[视频]' : '[图片]') : '还没有消息，来打个招呼吧';
+const previewText = message => message ? message.recalledAt ? '消息已撤回' : message.text || (message.attachments.some(file => file.mime.startsWith('video/')) ? '[视频]' : '[图片]') : '还没有消息，来打个招呼吧';
 
 export default function App() {
   const [bootstrap, setBootstrap] = useState(null);
@@ -33,6 +36,10 @@ export default function App() {
   const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [recalling, setRecalling] = useState(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const [removing, setRemoving] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -87,7 +94,27 @@ export default function App() {
       document.removeEventListener('visibilitychange', updateFocus);
     };
   }, [notify]);
-  const refresh = useCallback(async () => { try { const next = await api('state'); setState(next); return next; } catch (error) { if (error.status === 401) location.reload(); throw error; } }, []);
+  const syncHistory = useCallback((recalls = [], throughSeq = 0) => {
+    const history = historyRef.current;
+    const cleared = throughSeq > history.throughSeq;
+    if (cleared) { history.throughSeq = throughSeq; setHasMore({}); setScrolledUp(false); sticky.current = true; }
+    let changed = cleared;
+    for (const item of recalls) {
+      if (history.recalls.has(item.id)) continue;
+      history.recalls.set(item.id, item.recalledAt); changed = true;
+      window.desktop?.recalled?.({ id: item.id, roomId: item.roomId }).catch(() => {});
+    }
+    if (!changed) return;
+    setPreview(null); setContextMenu(null); setRecalling(null);
+    setMessages(previous => Object.fromEntries(Object.entries(previous).map(([id, items]) => [id, merge(items, [], history)])));
+    setState(previous => previous ? sanitizeState(previous, history) : previous);
+    setHistoryVersion(value => value + 1);
+    if (cleared) window.desktop?.historyCleared?.().catch(() => {});
+  }, []);
+  const refresh = useCallback(async () => {
+    try { const next = await api('state'); syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); return next; }
+    catch (error) { if (error.status === 401) location.reload(); throw error; }
+  }, [syncHistory]);
   const applyReceipt = useCallback(receipt => {
     const ids = new Set(receipt.messageIds);
     setMessages(previous => {
@@ -100,15 +127,18 @@ export default function App() {
   const markMessageRead = useMessageReads(state?.me.id, connected, applyReceipt);
   const start = useCallback(async () => {
     setStartupError('');
-    try { const result = await api('bootstrap'); setBootstrap(result); if (result.me) setState(result); }
+    try { const result = await api('bootstrap'); setBootstrap(result); if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); } }
     catch { setStartupError('暂时无法连接到聊天空间，请确认创建空间的 Mac 正在运行虾扯蛋。'); }
-  }, []);
+  }, [syncHistory]);
   useEffect(() => { start(); return () => clearTimeout(toastTimer.current); }, [start]);
   const receive = useCallback(message => {
-    setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message]) }));
+    if (message.recalledAt) syncHistory([message]);
+    message = sanitizeMessage(message, historyRef.current);
+    if (!message) return;
+    setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
     const current = stateRef.current;
-    if (window.desktop?.message && current && message.senderId !== current.me.id) {
+    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id) {
       const sender = current.users.find(user => user.id === message.senderId);
       const target = current.rooms.find(room => room.id === message.roomId);
       const hidden = privacyRef.current;
@@ -117,7 +147,7 @@ export default function App() {
         title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
       }).catch(error => notify(error.message));
     }
-  }, [notify]);
+  }, [notify, syncHistory]);
   useEffect(() => {
     if (!state?.me.id) return;
     let cancelled = false, socket, delay = 700;
@@ -127,7 +157,7 @@ export default function App() {
         const roomId = activeRoom.current;
         const result = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
         if (!cancelled) {
-          setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages) }));
+          setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages, historyRef.current) }));
           setHasMore(previous => ({ ...previous, [roomId]: result.hasMore }));
         }
       } catch (error) { if (!cancelled) notify(error.message); }
@@ -139,6 +169,8 @@ export default function App() {
       socket.onmessage = event => {
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') receive(data.message);
+        if (data.type === 'message-recalled') syncHistory([data.message]);
+        if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'users') setState(previous => ({ ...previous, users: data.users, me: data.users.find(user => user.id === previous.me.id) || previous.me }));
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
@@ -148,21 +180,21 @@ export default function App() {
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, refresh, receive, notify, applyReceipt]);
+  }, [state?.me.id, refresh, receive, notify, applyReceipt, syncHistory]);
   useEffect(() => {
     if (!state?.me.id) return;
     let cancelled = false;
     firstLoad.current = true; sticky.current = true; setScrolledUp(false); setLoading(true);
     api(`messages?roomId=${encodeURIComponent(selected)}`).then(result => {
       if (cancelled) return;
-      setMessages(previous => ({ ...previous, [selected]: merge(previous[selected] || [], result.messages) }));
+      setMessages(previous => ({ ...previous, [selected]: merge(previous[selected] || [], result.messages, historyRef.current) }));
       setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
     }).catch(error => { if (!cancelled) notify(error.message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [selected, state?.me.id, notify]);
   const currentMessages = messages[selected] || [];
   const lastSeq = currentMessages.at(-1)?.seq;
-  const unread = useUnread(state, messages, lastRead, connected);
+  const unread = useUnread(state, messages, lastRead, connected, historyVersion);
   useEffect(() => {
     if (!messageList.current || loading) return;
     if (firstLoad.current || sticky.current) { messageList.current.scrollTop = messageList.current.scrollHeight; firstLoad.current = false; }
@@ -188,7 +220,7 @@ export default function App() {
     const previousHeight = messageList.current.scrollHeight;
     try {
       const result = await api(`messages?roomId=${encodeURIComponent(selected)}&before=${currentMessages[0].seq}`);
-      setMessages(previous => ({ ...previous, [selected]: merge(result.messages, previous[selected] || []) }));
+      setMessages(previous => ({ ...previous, [selected]: merge(result.messages, previous[selected] || [], historyRef.current) }));
       setHasMore(previous => ({ ...previous, [selected]: result.hasMore }));
       requestAnimationFrame(() => { if (messageList.current) messageList.current.scrollTop += messageList.current.scrollHeight - previousHeight; });
     } catch (error) { notify(error.message); } finally { setLoading(false); }
@@ -234,7 +266,7 @@ export default function App() {
         {hasMore[selected] && <button className="load-older text-button" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><div className="welcome-channel-icon">{room.kind === 'public' ? <Hash size={31} /> : room.kind === 'group' ? <Users size={29} /> : <MessageCircle size={29} />}</div><span className="eyebrow">{room.kind === 'public' ? '每一段对话，从这里开始' : room.kind === 'group' ? '一群人，一些共同的话题' : '给熟悉的人，发个消息'}</span><h3>{room.kind === 'public' ? '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={16} />邀请同事加入<ArrowDown size={14} className="rotate-arrow" /></button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={19} />正在加载消息…</div>}
-        {currentMessages.map((message, index) => <React.Fragment key={message.id}>{(index === 0 || new Date(currentMessages[index - 1].createdAt).toDateString() !== new Date(message.createdAt).toDateString()) && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={windowActive && !modal && !removing && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} /></React.Fragment>)}
+        {currentMessages.map((message, index) => <React.Fragment key={message.id}>{(index === 0 || new Date(currentMessages[index - 1].createdAt).toDateString() !== new Date(message.createdAt).toDateString()) && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message} user={userMap[message.senderId]} mine={message.senderId === state.me.id} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={windowActive && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} /></React.Fragment>)}
       </div>{scrolledUp && <button className="jump-to-latest" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={15} />回到最新消息</button>}
       <Composer room={room} connected={connected} privateMode={privateMode} onSent={message => { sticky.current = true; receive(message); }} notify={notify} /></section>
       {showMembers && <aside className="members-panel"><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={16} />邀请成员</button>}{groupMembers.map(user => <div className="managed-member" key={user.id}><button className="member-row" key={user.id} onClick={() => directMessage(user)}><Avatar user={user} size={36} online={user.online} /><span>{user.name}{user.id === state.me.id && <small>我</small>}<small>{user.online ? '在线' : '离线'}</small></span><ChevronRight size={14} /></button>{state.workspace.ownerId === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}</div>)}<div className="members-bottom-note"><Radio size={15} /><span>在同一个网络里，<br />也在同一个话题里。</span></div></aside>}</div>
@@ -242,10 +274,12 @@ export default function App() {
     {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog onClose={() => setModal(null)} notify={notify} />}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); setSelected(id); }} notify={notify} />}
-    {modal === 'connection' && <ConnectionDialog connected={connected} me={state.me} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <ConnectionDialog connected={connected} me={state.me} workspace={state.workspace} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="认识一下，你的邻居们" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点击一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => <div className="managed-member" key={user.id}><button className="member-row" key={user.id} onClick={() => directMessage(user)}><Avatar user={user} size={40} online={user.online} /><span>{user.name}{user.id === state.me.id && <small>我</small>}<small>{user.online ? '在线' : '离线'}</small></span><ChevronRight size={16} /></button>{state.workspace.ownerId === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}</div>)}</div><button className="secondary-button full" onClick={() => setModal('invite')}><UserPlus size={16} />邀请新同事</button></Modal>}
     {preview && !privateMode && <Modal title={preview.name} onClose={() => setPreview(null)} wide><img className="lightbox-image" src={mediaUrl(preview.id)} alt={preview.name} /></Modal>}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
+    {contextMenu && <MessageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onRecall={() => { setRecalling(contextMenu.message); setContextMenu(null); }} />}
+    {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => { syncHistory([message]); notify('消息已撤回'); }} />}
     {toastElement}
   </div>;
 }

@@ -27,6 +27,11 @@ export function openStore(directory) {
       attachments TEXT NOT NULL DEFAULT '[]', client_id TEXT NOT NULL,
       created_at INTEGER NOT NULL, UNIQUE(sender_id, client_id)
     );
+    -- 撤回记录只保留消息标识与撤回时间，原正文和附件引用会清除。
+    CREATE TABLE IF NOT EXISTS message_recalls (message_id TEXT PRIMARY KEY, recalled_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS pending_file_deletions (id TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
+    INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
     -- 每条消息、每位接收者仅保存一次实际查看时间。
     CREATE TABLE IF NOT EXISTS message_reads (

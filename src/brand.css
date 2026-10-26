@@ -28,3 +28,11 @@
 .remove-member { color: #ad3a25; background: transparent; border: 0; padding: 8px; font-size: 12px; white-space: nowrap; border-radius: 6px; }
 .remove-member:hover { background: #fce4da; }
 .danger-button { background: #ad3a25 !important; }
+
+.recalled-message { color: #979087; font-size: 12px; text-align: center; padding: 12px 20px; }
+.message-context-menu { position: fixed; z-index: 1000; min-width: 144px; padding: 5px; border: 1px solid #e8e1d9; border-radius: 9px; background: #fffefa; box-shadow: 0 5px 20px #35271c24; }
+.message-context-menu button { width: 100%; border: none; background: transparent; text-align: left; padding: 8px 12px; border-radius: 5px; color: #763c29; font-size: 13px; }
+.message-context-menu button:hover, .message-context-menu button:focus-visible { background: #fff0e6; outline: none; }
+.storage-settings { border-top: 1px solid #e8e1d9; margin-top: 18px; padding-top: 15px; }
+.storage-settings h3 { font-size: 14px; }
+.storage-clear-button { color: #ad3a25 !important; }

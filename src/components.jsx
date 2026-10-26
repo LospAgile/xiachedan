@@ -57,7 +57,7 @@ function Attachment({ file, privateMode, onPreview }) {
   </div>;
 }
 
-export function Message({ message, user, mine, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false }) {
+export function Message({ message, user, mine, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -84,15 +84,16 @@ export function Message({ message, user, mine, privateMode, onPreview, viewerId,
     }, { threshold: [0, .05, .15, .5, 1] });
     observer.observe(bubble.current);
     return () => observer.disconnect();
-  }, [message.id, mine]);
+  }, [message.id, mine, message.recalledAt]);
   useEffect(() => {
-    if (mine || !readingEnabled || hidden || !visible || alreadyRead || !Array.isArray(message.readBy)) return;
+    if (message.recalledAt || mine || !readingEnabled || hidden || !visible || alreadyRead || !Array.isArray(message.readBy)) return;
     const timer = setTimeout(() => onRead?.(message.roomId, message.id), 350);
     return () => clearTimeout(timer);
-  }, [mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead]);
+  }, [message.recalledAt, mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead]);
   const readCount = recipients.filter(id => message.readBy?.includes(id)).length;
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
-  return <article className={`message-row ${mine ? 'mine' : ''}`} data-message-id={message.id}>
+  if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id}>{mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}</article>;
+  return <article onContextMenu={mine ? event => onContextMenu?.(event, message) : undefined} className={`message-row ${mine ? 'mine' : ''}`} data-message-id={message.id}>
     <Avatar user={user} size={36} />
     <div className="message-column"><div className="message-meta"><span>{user?.name || '成员'}{mine && <small>我</small>}</span><time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time></div>
       <div ref={bubble} className={`message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''}`} tabIndex={privateMode ? 0 : undefined}
@@ -105,4 +106,18 @@ export function Message({ message, user, mine, privateMode, onPreview, viewerId,
       {mine && recipients.length > 0 && Array.isArray(message.readBy) && <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} title={`${readCount} 人已读，${recipients.length - readCount} 人未读`}>{readLabel}</span>}
     </div>
   </article>;
+}
+
+export function MessageContextMenu({ menu, onClose, onRecall }) {
+  const ref = useRef();
+  useEffect(() => {
+    const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
+    const key = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', key);
+    window.addEventListener('blur', onClose);
+    window.addEventListener('resize', onClose);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
+  }, [onClose]);
+  return <div ref={ref} role="menu" aria-label="消息操作" className="message-context-menu" style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - 62)) }}><button autoFocus role="menuitem" onClick={onRecall}>撤回消息</button></div>;
 }

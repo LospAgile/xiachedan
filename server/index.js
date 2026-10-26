@@ -3,10 +3,10 @@ import multer from 'multer';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, unlinkSync, openSync, readSync, closeSync } from 'node:fs';
+import { mkdirSync, unlinkSync, openSync, readSync, closeSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openStore, serializeMessage } from './store.js';
+import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,6 +46,24 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const failures = new Map();
   const limits = new Map();
   const stmt = sql => db.prepare(sql);
+  const recalledAt = id => stmt('SELECT recalled_at FROM message_recalls WHERE message_id=?').get(id)?.recalled_at || null;
+  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id) } : null;
+  const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
+  const cleanFiles = () => {
+    for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
+      try { unlinkSync(path.join(uploadDir, id)); }
+      catch (error) { if (error.code !== 'ENOENT') continue; }
+      stmt('DELETE FROM pending_file_deletions WHERE id=?').run(id);
+    }
+  };
+  cleanFiles();
+  const fileSize = file => { try { return statSync(file).size; } catch { return 0; } };
+  const storage = () => ({
+    messageCount: stmt('SELECT COUNT(*) AS n FROM messages').get().n,
+    attachmentBytes: stmt("SELECT COALESCE(SUM(size),0) AS n FROM uploads WHERE purpose='message' AND claimed=1").get().n,
+    databaseBytes: ['chat.sqlite', 'chat.sqlite-wal'].reduce((sum, file) => sum + fileSize(path.join(dataDir, file)), 0),
+    pendingBytes: stmt('SELECT id FROM pending_file_deletions').all().reduce((sum, row) => sum + fileSize(path.join(uploadDir, row.id)), 0),
+  });
   const workspace = () => stmt('SELECT * FROM workspace WHERE id=1').get();
   const ownerId = () => stmt('SELECT user_id FROM space_admin WHERE id=1').get()?.user_id;
   const isRemoved = id => Boolean(stmt('SELECT 1 FROM removed_users WHERE user_id=?').get(id));
@@ -84,6 +102,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)) }));
+  const stateFor = user => {
+    const rooms = roomsFor(user.id);
+    const allowed = new Set(rooms.map(room => room.id));
+    const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
+    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq() };
+  };
   const broadcast = (event, roomId) => {
     const payload = JSON.stringify(event);
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
@@ -113,13 +137,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     next();
   });
   app.use(express.json({ limit: '64kb' }));
-  app.get('/api/health', (_req, res) => res.json({ app: 'linliao', version: '1.2.1' }));
+  app.get('/api/health', (_req, res) => res.json({ app: 'linliao', version: '1.3.0' }));
   app.get('/api/bootstrap', (req, res) => {
     const ws = workspace();
     const me = authUser(req);
     res.json({ configured: Boolean(ws), workspace: ws ? spaceInfo() : null,
       canCreate: loopback(req.socket.remoteAddress) && req.get('X-Setup-Key') === setupKey,
-      me, ...(me ? { users: users(), rooms: roomsFor(me.id) } : {}) });
+      me, ...(me ? stateFor(me) : {}) });
   });
   app.post('/api/setup', (req, res) => {
     if (!loopback(req.socket.remoteAddress) || req.get('X-Setup-Key') !== setupKey) throw fail('请在创建空间的 Mac 上操作', 403);
@@ -162,7 +186,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     req.user = authUser(req);
     next(req.user ? undefined : fail('请先加入空间', 401));
   });
-  app.get('/api/state', (req, res) => res.json({ me: req.user, workspace: spaceInfo(), users: users(), rooms: roomsFor(req.user.id) }));
+  app.get('/api/state', (req, res) => res.json(stateFor(req.user)));
   app.post('/api/remove-member', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以移除成员', 403);
     const id = req.body?.userId;
@@ -180,12 +204,62 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'rooms' });
     res.json({ ok: true });
   });
+  app.post('/api/recall-message', (req, res) => {
+    rateLimit(req, 'recall', 60);
+    const id = req.body?.messageId;
+    if (typeof id !== 'string' || !id || id.length > 100) throw fail('消息标识无效');
+    const row = stmt('SELECT * FROM messages WHERE id=?').get(id);
+    if (!row) throw fail('消息不存在或已被清空', 404);
+    requireRoom(row.room_id, req.user.id);
+    if (row.sender_id !== req.user.id) throw fail('只能撤回自己发送的消息', 403);
+    if (!recalledAt(id)) {
+      db.exec('BEGIN');
+      try {
+        for (const file of JSON.parse(row.attachments)) {
+          stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(file.id);
+          stmt('DELETE FROM uploads WHERE id=?').run(file.id);
+        }
+        stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
+        stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
+        stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      cleanFiles();
+      broadcast({ type: 'message-recalled', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
+    }
+    res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
+  });
+  app.get('/api/storage', (req, res) => {
+    if (req.user.id !== ownerId()) throw fail('只有空间创建者可以管理聊天记录', 403);
+    res.json(storage());
+  });
+  app.post('/api/clear-history', (req, res) => {
+    if (req.user.id !== ownerId()) throw fail('只有空间创建者可以清空聊天记录', 403);
+    if (req.body?.confirmation !== '清空') throw fail('请输入“清空”确认删除');
+    const before = storage();
+    const throughSeq = Math.max(clearedThroughSeq(), stmt('SELECT COALESCE(MAX(seq),0) AS n FROM messages').get().n);
+    db.exec('BEGIN');
+    try {
+      db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM messages;");
+      stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    cleanFiles();
+    broadcast({ type: 'history-cleared', throughSeq });
+    let compacted = true;
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);'); }
+    catch { compacted = false; }
+    const after = storage();
+    res.json({ ok: true, throughSeq, compacted, storage: after,
+      freedBytes: Math.max(0, before.attachmentBytes + before.databaseBytes + before.pendingBytes - after.attachmentBytes - after.databaseBytes - after.pendingBytes) });
+  });
   app.post('/api/unread-counts', (req, res) => {
     const cursors = req.body?.cursors;
     if (!cursors || typeof cursors !== 'object' || Array.isArray(cursors) ||
       Object.entries(cursors).some(([id, seq]) => !id || id.length > 100 || !Number.isSafeInteger(seq) || seq < 0)) throw fail('已读位置无效');
     const count = stmt(`SELECT COALESCE(MAX(seq), ?) AS throughSeq,
-      COALESCE(SUM(CASE WHEN sender_id<>? THEN 1 ELSE 0 END), 0) AS unreadCount
+      COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount
       FROM messages WHERE room_id=? AND seq>?`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
@@ -205,7 +279,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const unique = [...new Set(ids)];
     const rows = stmt(`SELECT id, sender_id, room_id FROM messages WHERE id IN (${unique.map(() => '?').join(',')})`).all(...unique);
     if (rows.length !== unique.length || rows.some(row => row.room_id !== room.id)) throw fail('消息不属于这个会话', 403);
-    const received = rows.filter(row => row.sender_id !== req.user.id);
+    const received = rows.filter(row => row.sender_id !== req.user.id && !recalledAt(row.id));
     const changed = [];
     const insert = stmt('INSERT OR IGNORE INTO message_reads (message_id,user_id,read_at) VALUES (?,?,?)');
     db.exec('BEGIN');
@@ -364,6 +438,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (!socket.alive) socket.terminate();
       else { socket.alive = false; socket.ping(); }
     }
+    cleanFiles();
     for (const [key, value] of limits) if (value.until < Date.now()) limits.delete(key);
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
     const old = stmt('SELECT id FROM uploads WHERE claimed=0 AND created_at<?').all(Date.now() - 86400000);

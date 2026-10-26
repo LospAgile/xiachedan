@@ -124,10 +124,17 @@ class MenuBar {
     });
   }
 
+  recalled(value) {
+    if (!value || !validId(value.id) || !validId(value.roomId)) throw new Error('消息标识无效');
+    if (this.notifications.get(value.roomId)?.chatMessageId === `linliao-${value.id}`) this.clearRoom(value.roomId);
+    return true;
+  }
+
   display(roomId, options) {
     this.clearRoom(roomId);
     try {
       const notification = new Notification({ ...options, silent: false });
+      notification.chatMessageId = options.id;
       this.notifications.set(roomId, notification);
       // Retain the object while it remains in Notification Center, so clicks work
       // after the banner disappears and privacy mode can still remove its preview.

@@ -84,6 +84,8 @@ if (gotLock) {
     ipcMain.handle('chat:settings', (event, value) => { requireTrusted(event); return menuBar.settings(value); });
     ipcMain.handle('chat:activity', (event, value) => { requireTrusted(event); return menuBar.activity(value); });
     ipcMain.handle('chat:message', (event, value) => { requireTrusted(event); return menuBar.message(value); });
+    ipcMain.handle('chat:recalled', (event, value) => { requireTrusted(event); return menuBar.recalled(value); });
+    ipcMain.handle('chat:history-cleared', event => { requireTrusted(event); menuBar.clearNotifications(); menuBar.unread.clear(); menuBar.render(); return true; });
     ipcMain.handle('chat:test-notification', event => { requireTrusted(event); return menuBar.testNotification(); });
     ipcMain.handle('chat:notification-settings', event => { requireTrusted(event); return menuBar.openNotificationSettings(); });
     Menu.setApplicationMenu(Menu.buildFromTemplate([

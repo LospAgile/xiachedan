@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Camera, Laptop, Plus, Check, Search, Users, ArrowRight, ShieldCheck, Wifi, ExternalLink, Bell } from 'lucide-react';
-import { api, upload } from './api';
+import { api, upload, formatSize } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 
@@ -86,10 +86,11 @@ function DesktopSettings({ notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ connected, me, onClose, notify }) {
+export function ConnectionDialog({ connected, me, workspace, onCleared, onClose, notify }) {
   return <Modal title="连接与空间" subtitle="所有聊天都通过局域网连接。" onClose={onClose}>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     <p className="inline-note">消息和附件保存在创建空间的 Mac 上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>
+    {workspace.ownerId === me.id && <StorageSettings onCleared={onCleared} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
       <h3 className="join-space-heading">加入另一个空间</h3><JoinSpaceForm identity={me} />
       <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button>
@@ -110,4 +111,51 @@ export function RemoveMemberDialog({ user, onClose, onRemoved }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button danger-button" disabled={busy} onClick={remove}>{busy ? '正在移除…' : '确认移除'}</button></div>
   </Modal>;
+}
+
+export function RecallDialog({ message, onClose, onRecalled }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function recall() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { const result = await api('recall-message', { messageId: message.id }); onRecalled(result.message); }
+    catch (error) { setError(error.message); setBusy(false); }
+  }
+  return <Modal title="撤回这条消息？" subtitle="撤回后，所有成员将看到撤回提示，原来的文字、图片和视频不再提供查看。" onClose={() => !busy && onClose()}>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={recall}>{busy ? '正在撤回…' : '确认撤回'}</button></div>
+  </Modal>;
+}
+
+function StorageSettings({ onCleared, notify }) {
+  const [info, setInfo] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmation, setConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { api('storage').then(setInfo).catch(error => setError(error.message)); }, []);
+  const size = bytes => bytes === 0 ? '0 KB' : formatSize(bytes);
+  async function clear() {
+    if (busy || confirmation !== '清空') return;
+    setBusy(true); setError('');
+    try {
+      const result = await api('clear-history', { confirmation }, { signal: AbortSignal.timeout(120000) });
+      setInfo(result.storage); setConfirming(false); setConfirmation(''); await onCleared(result);
+      notify(`记录已清空，释放 ${size(result.freedBytes)}`);
+      if (!result.compacted || result.storage.pendingBytes) setError('聊天记录已删除，部分磁盘空间暂未释放，请稍后再次清理。');
+    } catch (error) { setError(error.message); }
+    finally { setBusy(false); }
+  }
+  return <section className="storage-settings"><h3>聊天记录与存储</h3>
+    <p className="inline-note">{info ? `${info.messageCount} 条记录 · 聊天附件 ${size(info.attachmentBytes)} · 数据库 ${size(info.databaseBytes)}` : '正在统计空间占用…'}</p>
+    <p className="inline-note">清空整个空间所有会话的聊天记录及已发送的图片、视频，释放创建空间的 Mac 上的存储。成员、头像和群聊会保留。</p>
+    <button className="secondary-button storage-clear-button" disabled={!info || busy} onClick={() => setConfirming(true)}>清空空间聊天记录</button>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {confirming && <Modal title="清空整个空间的聊天记录？" subtitle="所有成员的大厅、群聊和私聊记录都会删除，图片与视频文件也会删除。此操作无法恢复。" onClose={() => !busy && setConfirming(false)}>
+      <label className="field-label" htmlFor="clear-history-confirm">输入“清空”以确认</label><input id="clear-history-confirm" value={confirmation} onChange={event => setConfirmation(event.target.value)} disabled={busy} autoComplete="off" />
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={() => setConfirming(false)}>取消</button><button className="primary-button danger-button" disabled={busy || confirmation !== '清空'} onClick={clear}>{busy ? '正在清理…' : '确认清空'}</button></div>
+    </Modal>}
+  </section>;
 }

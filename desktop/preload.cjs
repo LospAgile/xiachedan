@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('desktop', {
   settings: value => ipcRenderer.invoke('chat:settings', value),
   activity: value => ipcRenderer.invoke('chat:activity', value),
   message: value => ipcRenderer.invoke('chat:message', value),
+  recalled: value => ipcRenderer.invoke('chat:recalled', value),
+  historyCleared: () => ipcRenderer.invoke('chat:history-cleared'),
   testNotification: () => ipcRenderer.invoke('chat:test-notification'),
   notificationSettings: () => ipcRenderer.invoke('chat:notification-settings'),
   onEvent: callback => {
