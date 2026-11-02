@@ -21,6 +21,7 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [roomMenu, setRoomMenu] = useState(null);
   const [replying, setReplying] = useState(null);
+  const [reactingTo, setReactingTo] = useState(null);
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -48,7 +49,7 @@ export default function App() {
     setPreview(null); setContextMenu(null); setRecalling(null); setReadDetail(null);
   }, []);
   const { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
   useEffect(() => {
     if (!state?.me.id) return;
     firstLoad.current = true; sticky.current = true; setScrolledUp(false);
@@ -112,6 +113,10 @@ export default function App() {
     row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
+  }
+  async function toggleReaction(message, emoji) {
+    try { applyReactions(await api('reactions', { messageId: message.id, emoji })); }
+    catch (error) { notify(error.message); }
   }
   async function changePreference(target, change) {
     try { await api('room-preferences', { roomId: target.id, ...change }); await refresh(); }
@@ -197,7 +202,8 @@ export default function App() {
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
         {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message}
           onReply={target => setReplying({ roomId: target.roomId, id: target.id })} nameOf={id => userMap[id]?.name}
-          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
+          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
+          reactionOptions={state.reactions || []} onReact={toggleReaction} picking={reactingTo === message.id} onPick={setReactingTo} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
       <Composer room={room} connected={connected} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
@@ -218,6 +224,7 @@ export default function App() {
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail} />}
     {contextMenu && <ContextMenu menu={contextMenu} label="消息操作" onClose={() => setContextMenu(null)} items={[
       { label: '回复', onSelect: () => setReplying({ roomId: contextMenu.message.roomId, id: contextMenu.message.id }) },
+      ...(state.reactions?.length ? [{ label: '回应', onSelect: () => setReactingTo(contextMenu.message.id) }] : []),
       ...(contextMenu.message.senderId === state.me.id ? [{ label: '撤回消息', onSelect: () => setRecalling(contextMenu.message) }] : []),
     ]} />}
     {roomMenu && <ContextMenu menu={roomMenu} label={`${roomName(roomMenu.room)} 会话操作`} onClose={() => setRoomMenu(null)} items={[
