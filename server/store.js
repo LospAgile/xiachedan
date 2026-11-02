@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 管理员删除的消息：与撤回一样清空内容，另记下是谁删的，界面显示「管理员删除了一条消息」。
+    CREATE TABLE IF NOT EXISTS message_removals (message_id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, removed_at INTEGER NOT NULL);
     -- 链接预览缓存：成功的保留一天，失败的保留一小时，避免反复抓取同一个网址。
     CREATE TABLE IF NOT EXISTS link_previews (url TEXT PRIMARY KEY, data TEXT, error TEXT, fetched_at INTEGER NOT NULL);
     -- 图片缩略图：客户端上传原图后再传一张小图，发送时随附件一起记录；聊天里显示小图，查看大图时才加载原图。

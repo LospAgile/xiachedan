@@ -137,7 +137,7 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify }) {
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit }) {
   const cloud = workspace.mode === 'cloud';
   return <Modal title="设置" subtitle={cloud ? undefined : '所有聊天都通过局域网连接。'} onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
@@ -145,6 +145,7 @@ export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, 
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
     {cloud && <DeviceSettings notify={notify} />}
+    {onAudit && <section className="device-settings"><h3>管理</h3><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button></section>}
     {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
     {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
@@ -235,6 +236,24 @@ export function WebhooksDialog({ room, onClose, notify }) {
     <form className="webhook-create" onSubmit={create}><input aria-label="机器人名称" placeholder="机器人名称，例如：告警" value={name} maxLength={24} onChange={event => setName(event.target.value)} disabled={busy} />
       <button className="primary-button" disabled={busy || !name.trim()}>{busy ? '请稍候…' : '添加'}</button></form>
     {error && <p className="form-error" role="alert">{error}</p>}
+  </Modal>;
+}
+
+const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息' };
+// 操作日志：谁在什么时候对谁做了哪项管理操作；被删消息只记会话，不保留内容。
+export function AuditDialog({ onClose }) {
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { api(`admin/audit?page=${page}`).then(setResult).catch(failure => setError(failure.message)); }, [page]);
+  const where = entry => { if (entry.action !== 'delete-message') return entry.action === 'role' ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
+  return <Modal title="操作日志" subtitle="管理员的审核、权限、密码和删除消息操作，最新的在前。" wide onClose={onClose}>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
+      <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
+      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
+    </li>)}</ul>}
+    {result?.total > 50 && <div className="account-pagination"><button className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页 · 共 {result.total} 条</span><button className="secondary-button" disabled={page * 50 >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
   </Modal>;
 }
 

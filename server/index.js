@@ -95,7 +95,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const botOf = id => stmt('SELECT name FROM message_bots WHERE message_id=?').get(id)?.name || null;
   const editedAt = id => stmt('SELECT edited_at FROM message_edits WHERE message_id=?').get(id)?.edited_at || null;
-  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), editedAt: editedAt(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const removedBy = id => stmt('SELECT actor_id FROM message_removals WHERE message_id=?').get(id)?.actor_id || null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -386,9 +387,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能撤回自己发送的消息', 403);
+    recallMessage(row);
+    res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
+  });
+  // 撤回与管理员删除共用：清空正文和附件，删掉相关的已读、引用、提及、回应等记录，并通知会话里的人。
+  const recallMessage = (row, removedBy) => {
+    const id = row.id;
     if (!recalledAt(id)) {
       db.exec('BEGIN');
       try {
+        if (removedBy) stmt('INSERT OR IGNORE INTO message_removals VALUES (?,?,?)').run(id, removedBy.id, Date.now());
         for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
@@ -406,7 +414,34 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       cleanFiles();
       broadcast({ type: 'message-recalled', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
     }
-    res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
+  };
+  // 空间管理者：账号模式是管理员和超级管理员，局域网模式是空间创建者。
+  const isManager = user => cloud ? ['admin', 'super_admin'].includes(user.role) : user.id === ownerId();
+  const requireManager = req => { if (!isManager(req.user)) throw fail('只有管理员可以这样操作', 403); };
+  // 管理员删除任何人的消息，记入操作日志（只记消息和会话标识，不保留被删的内容）。
+  app.post('/api/admin/delete-message', (req, res) => {
+    requireManager(req);
+    rateLimit(req, 'admin-delete', 60);
+    const id = req.body?.messageId;
+    const row = typeof id === 'string' && id.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(id);
+    if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
+    if (recalledAt(row.id)) throw fail('消息已撤回');
+    const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
+    if (room.kind === 'direct' && !JSON.parse(room.members).includes(req.user.id)) throw fail('管理员不能查看或删除别人的私聊', 403);
+    recallMessage(row, req.user);
+    stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, row.sender_id, 'delete-message', JSON.stringify({ messageId: row.id, roomId: row.room_id, roomName: room.name }), Date.now());
+    res.json({ message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(row.id)) });
+  });
+  // 操作日志：账号审核、角色、密码与删除消息等管理操作，最新的在前，每页 50 条。
+  app.get('/api/admin/audit', (req, res) => {
+    requireManager(req);
+    const page = Math.max(1, Math.min(100000, Number(req.query.page) || 1));
+    const total = stmt('SELECT COUNT(*) AS n FROM account_audit').get().n;
+    const names = new Map(stmt('SELECT id, name FROM users').all().map(user => [user.id, user.name]));
+    const rows = stmt('SELECT * FROM account_audit ORDER BY id DESC LIMIT 50 OFFSET ?').all((page - 1) * 50);
+    res.json({ total, page, entries: rows.map(row => ({ id: row.id, action: row.action, createdAt: row.created_at, detail: row.detail,
+      actor: { id: row.actor_id, name: names.get(row.actor_id) || '已删除的成员' },
+      target: { id: row.user_id, name: row.user_id.startsWith('webhook:') ? '机器人' : names.get(row.user_id) || '已删除的成员' } })) });
   });
   // 编辑自己发的消息：只改正文；@提及只保留正文里仍写着的，不新增提醒，避免借编辑反复打扰别人。
   app.post('/api/edit-message', (req, res) => {
@@ -447,7 +482,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }

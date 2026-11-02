@@ -34,6 +34,8 @@ pub struct ContextMenuOptions {
   can_edit: bool,
   #[serde(default)]
   can_recall: bool,
+  #[serde(default)]
+  can_remove: bool,
 }
 
 #[tauri::command]
@@ -62,7 +64,7 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
         let groups: [&[(bool, &str, &str)]; 3] = [
           &[(value.can_reply, "reply", "回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
           &[(value.can_copy, "copy", "复制"), (value.can_edit, "edit", "编辑")],
-          &[(value.can_recall, "recall", "撤回消息")],
+          &[(value.can_recall, "recall", "撤回消息"), (value.can_remove, "remove", "删除消息（管理员）")],
         ];
         let mut first = true;
         for group in groups {

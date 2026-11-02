@@ -761,3 +761,6 @@ button.message-read-status.is-read { color: var(--text-1); }
 .link-preview span { font-size: 12px; line-height: 17px; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .mine .link-preview { border-left-color: #fff; background: rgba(0, 0, 0, .14); }
 .mine .link-preview small, .mine .link-preview span { color: rgba(255, 255, 255, .92); }
+.audit-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.audit-list li { display: flex; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.audit-list time { flex: none; width: 150px; color: var(--text-2); font-variant-numeric: tabular-nums; }

@@ -165,7 +165,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         let data; try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
-        if (data.type === 'message-recalled') syncHistory([data.message]);
+        if (data.type === 'message-recalled') { syncHistory([data.message]); applyEdit(data.message); }
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);

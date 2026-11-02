@@ -5,7 +5,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -25,6 +25,7 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState(null);
   const [replying, setReplying] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [removingMessage, setRemovingMessage] = useState(null);
   const [reactingTo, setReactingTo] = useState(null);
   const [selection, setSelection] = useState(null);
   const [forwarding, setForwarding] = useState(null);
@@ -237,12 +238,15 @@ export default function App() {
     const canReply = !message.recalledAt;
     const canReact = canReply && Boolean(state.reactions?.length);
     const canEdit = canRecall;
+    const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
+    const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
     const act = action => {
       const current = messageContext.current;
       if (current.scope !== conversationScope) return;
       const latest = current.messages[message.roomId]?.find(item => item.id === message.id);
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
+      if (action === 'remove') setRemovingMessage(latest);
       if (action === 'reply') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'react') setReactingTo(latest.id);
       if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
@@ -253,13 +257,14 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canRecall }, [
+    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canRecall, canRemove }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
+      ...(canRemove ? [{ id: 'remove', label: '删除消息（管理员）', action: () => act('remove') }] : []),
     ], '消息操作');
   }
   const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
@@ -401,7 +406,7 @@ export default function App() {
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <ConnectionDialog theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <ConnectionDialog onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="空间成员" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => memberRow(user, 32))}</div><div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && (() => {
       const images = currentMessages.filter(message => !message.recalledAt).flatMap(message => message.attachments.filter(file => file.mime.startsWith('image/')));
@@ -411,6 +416,9 @@ export default function App() {
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
+    {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
+      onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
+    {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
     {groupAction?.type === 'webhooks' && room && room.kind !== 'direct' && <WebhooksDialog room={room} notify={notify} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'name' && room?.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
     {groupAction?.type === 'announcement' && room?.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}
