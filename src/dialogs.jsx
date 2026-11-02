@@ -4,6 +4,7 @@ import { api, upload, formatSize, absoluteUrl } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
+import { readQuiet, saveQuiet, isQuiet } from './quiet';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   const [name, setName] = useState(me.name);
@@ -144,6 +145,7 @@ export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, 
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
+    <QuietSettings notify={notify} />
     {cloud && <DeviceSettings notify={notify} />}
     {onAudit && <section className="device-settings"><h3>管理</h3><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button></section>}
     {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
@@ -349,6 +351,23 @@ export function RecallDialog({ message, onClose, onRecalled }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={recall}>{busy ? '正在撤回…' : '确认撤回'}</button></div>
   </Modal>;
+}
+
+// 勿扰：每天的固定时段，或临时暂停一阵子；只影响这台设备的系统通知，消息照常收到、未读照常计数。
+function QuietSettings({ notify }) {
+  const [quiet, setQuiet] = useState(readQuiet);
+  const change = next => { const value = { ...quiet, ...next }; setQuiet(value); saveQuiet(value); };
+  const pause = hours => { const until = hours ? Date.now() + hours * 3600000 : (() => { const date = new Date(); date.setHours(24, 0, 0, 0); return date.getTime(); })(); change({ until }); notify(`通知已暂停到 ${new Date(until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`); };
+  const paused = quiet.until > Date.now();
+  return <section className="device-settings quiet-settings"><h3>勿扰</h3>
+    <label className="toggle-row"><input type="checkbox" checked={quiet.enabled} onChange={event => change({ enabled: event.target.checked })} />每天
+      <input type="time" aria-label="开始时间" value={quiet.start} disabled={!quiet.enabled} onChange={event => change({ start: event.target.value })} />到
+      <input type="time" aria-label="结束时间" value={quiet.end} disabled={!quiet.enabled} onChange={event => change({ end: event.target.value })} />不弹通知</label>
+    <label className="toggle-row"><input type="checkbox" checked={quiet.mentions} onChange={event => change({ mentions: event.target.checked })} />有人 @我 时照常提醒</label>
+    <div className="time-chips">{paused ? <><span className="inline-note">已暂停到 {new Date(quiet.until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span><button type="button" className="secondary-button" onClick={() => change({ until: 0 })}>恢复通知</button></>
+      : <><button type="button" className="secondary-button" onClick={() => pause(1)}>暂停 1 小时</button><button type="button" className="secondary-button" onClick={() => pause(0)}>今天不再提醒</button></>}</div>
+    {isQuiet() && <p className="inline-note">现在处于勿扰中：消息照常收到，只是不弹系统通知。</p>}
+  </section>;
 }
 
 // 从浏览器标识里认出系统和应用，够用就好。

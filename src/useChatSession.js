@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
 import useMessageReads from './useMessageReads';
+import { isQuiet } from './quiet';
 
 // 空间会话的数据层：启动、状态同步、WebSocket、分页消息、撤回与清空记录、已读回执。
 export default function useChatSession({ selected, notify, privacyRef, mutedRef, onHistoryChanged }) {
@@ -138,7 +139,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const target = current?.rooms.find(room => room.id === message.roomId);
     const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
     // 免打扰的会话只在被 @ 时提醒。
-    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe)) {
+    if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe) && !isQuiet(mentionsMe)) {
       const sender = current.users.find(user => user.id === message.senderId);
       const hidden = privacyRef.current;
       const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
