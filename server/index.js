@@ -387,9 +387,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!recalledAt(id)) {
       db.exec('BEGIN');
       try {
-        for (const file of JSON.parse(row.attachments)) {
-          stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(file.id);
-          stmt('DELETE FROM uploads WHERE id=?').run(file.id);
+        for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
+          stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
+          stmt('DELETE FROM uploads WHERE id=?').run(id);
         }
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
@@ -444,8 +444,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const throughSeq = Math.max(clearedThroughSeq(), stmt('SELECT COALESCE(MAX(seq),0) AS n FROM messages').get().n);
     db.exec('BEGIN');
     try {
-      db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM messages;");
+      db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -523,7 +523,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
           try { linkSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); }
           copied.push(id);
           stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.user.id, target.id, file.name, file.mime, file.size, 'message', 1, Date.now());
-          return { ...file, id };
+          const { thumbId, ...rest } = file;
+          return { ...rest, id };
         });
         const id = randomUUID();
         stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, target.id, req.user.id, row.text, JSON.stringify(attachments), `forward:${randomUUID()}`, Date.now());
@@ -704,10 +705,27 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
+  // 缩略图只能挂在自己刚上传、还没发送的图片上，本身也必须是 2 MB 以内的静态图片。
+  const thumbnailTarget = req => {
+    const target = typeof req.query.thumbnailFor === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.thumbnailFor);
+    if (!target || target.owner_id !== req.user.id || target.claimed || target.purpose !== 'message' || target.room_id !== req.query.roomId || !target.mime.startsWith('image/')) throw fail('缩略图对应的图片无效');
+    return target;
+  };
+  const saveThumbnail = (req, file) => {
+    const target = thumbnailTarget(req);
+    const mime = detectMime(file.path);
+    if (!['image/jpeg', 'image/webp', 'image/png'].includes(mime) || file.size > 2 * 1024 * 1024) throw fail('缩略图格式无效');
+    stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(file.filename, req.user.id, target.room_id, 'thumbnail', mime, file.size, 'thumbnail', 0, Date.now());
+    const previous = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(target.id);
+    if (previous) { stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(previous.thumb_id); stmt('DELETE FROM uploads WHERE id=?').run(previous.thumb_id); }
+    stmt('INSERT OR REPLACE INTO upload_thumbnails VALUES (?,?)').run(target.id, file.filename);
+    return { id: file.filename, size: file.size };
+  };
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
     if (req.query.purpose !== 'avatar') requireRoom(req.query.roomId, req.user.id);
+    if (req.query.thumbnailFor !== undefined) thumbnailTarget(req);
     if (cloud) {
       if (activeUploads >= 4) throw fail('上传服务繁忙，请稍后重试', 429);
       const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
@@ -724,6 +742,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     try {
       if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
       const isAvatar = req.query.purpose === 'avatar';
+      if (req.query.thumbnailFor !== undefined) return res.status(201).json({ thumbnail: saveThumbnail(req, file) });
       // 能识别为图片或视频的才在页面内预览，其余一律作为普通文件，只允许下载。
       const mime = detectMime(file.path) || (isAvatar ? null : 'application/octet-stream');
       if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail('头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
@@ -752,7 +771,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (typeof id !== 'string') throw fail('附件无效');
       const file = stmt('SELECT * FROM uploads WHERE id=?').get(id);
       if (!file || file.owner_id !== req.user.id || file.room_id !== room.id || file.purpose !== 'message' || file.claimed) throw fail('附件不可用，请重新选择');
-      return { id: file.id, name: file.name, mime: file.mime, size: file.size };
+      const thumb = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(file.id)?.thumb_id;
+      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}) };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
@@ -779,7 +799,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
-      for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id=?').run(file.id);
+      for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id IN (?,?)').run(file.id, file.thumbId || file.id);
       if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
       for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');
@@ -791,7 +811,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.get('/api/media', (req, res) => {
     const file = typeof req.query.id === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.id);
     if (!file) throw fail('文件不存在', 404);
-    if (file.purpose === 'message') {
+    if (file.purpose === 'message' || file.purpose === 'thumbnail') {
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }
@@ -856,7 +876,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const [key, value] of limits) if (value.until < Date.now()) limits.delete(key);
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
     const old = stmt('SELECT id FROM uploads WHERE claimed=0 AND created_at<?').all(Date.now() - 86400000);
-    for (const file of old) { try { unlinkSync(path.join(uploadDir, file.id)); } catch {} stmt('DELETE FROM uploads WHERE id=?').run(file.id); }
+    for (const file of old) { try { unlinkSync(path.join(uploadDir, file.id)); } catch {} stmt('DELETE FROM uploads WHERE id=?').run(file.id); stmt('DELETE FROM upload_thumbnails WHERE upload_id=? OR thumb_id=?').run(file.id, file.id); }
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }

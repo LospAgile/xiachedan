@@ -38,10 +38,23 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     requestAnimationFrame(() => { const node = textarea.current; node?.focus(); node?.setSelectionRange(start + insert.length, start + insert.length); });
   }
   useEffect(() => () => { for (const draft of Object.values(draftsRef.current)) for (const item of draft.files) URL.revokeObjectURL(item.url); }, []);
+  // 较大的静态图片在本机缩成长边 720 像素的小图一起上传，聊天里先显示小图；失败时照常只用原图。
+  async function makeThumbnail(file) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type) || file.size < 150 * 1024 || !window.createImageBitmap) return null;
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 720 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
+    return blob && blob.size < file.size ? new File([blob], 'thumbnail.webp', { type: blob.type }) : null;
+  }
   async function uploadItem(item, roomId) {
     update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: '', progress: 0 } : file) }));
     try {
-      const { attachment } = await upload(item.file, { roomId }, progress => update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, progress } : file) })));
+      const { attachment } = await upload(item.file, { roomId }, progress => update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, progress: Math.min(progress, 99) } : file) })));
+      try { const thumbnail = await makeThumbnail(item.file); if (thumbnail) await upload(thumbnail, { roomId, thumbnailFor: attachment.id }); } catch {}
       update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, attachment, progress: 100 } : file) }));
     } catch (error) { update(roomId, state => ({ ...state, files: state.files.map(file => file.id === item.id ? { ...file, error: error.message } : file) })); notify(error.message); }
   }

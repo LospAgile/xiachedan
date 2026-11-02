@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 图片缩略图：客户端上传原图后再传一张小图，发送时随附件一起记录；聊天里显示小图，查看大图时才加载原图。
+    CREATE TABLE IF NOT EXISTS upload_thumbnails (upload_id TEXT PRIMARY KEY, thumb_id TEXT NOT NULL);
     -- 账号模式的登录设备：按登录会话记下设备描述、来源地址和最后活跃时间，用于「登录设备」列表。
     CREATE TABLE IF NOT EXISTS session_devices (token_hash TEXT PRIMARY KEY, user_agent TEXT NOT NULL, ip TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
     -- 编辑过的消息记下最后一次编辑时间，界面显示「已编辑」。
