@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck } from 'lucide-react';
-import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
+import { api, formatTime, mediaUrl, nativeTitlebar, seenText } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
@@ -387,9 +387,9 @@ export default function App() {
     </button>;
   };
   const groupOwner = room?.kind === 'group' ? room.ownerId : null;
-  const memberRow = (user, size, inGroup = false) => <div className="managed-member" key={user.id}><button className="member-row" onClick={() => directMessage(user)}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.id === state.me.id && <small className="me-tag">我</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small>{user.online ? '在线' : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && isOwner && !cloud && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}
+  const memberRow = (user, size, inGroup = false) => <div className="managed-member" key={user.id}><button className="member-row" onClick={() => directMessage(user)}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && isOwner && !cloud && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}
     {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>;
-  const subtitle = room?.kind === 'direct' ? peer?.online ? '在线' : '离线 · 上线后送达' : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
+  const subtitle = room?.kind === 'direct' ? peer?.online ? '在线' : peer?.lastSeen ? seenText(peer.lastSeen) : '离线 · 上线后送达' : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
@@ -472,7 +472,7 @@ export default function App() {
           {room.kind === 'group' && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />退出群聊</button>}</>}</aside>}</div>
       </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
     </main>
-    {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
+    {modal === 'profile' && <ProfileDialog me={{ ...state.me, ...userMap[state.me.id] }} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}

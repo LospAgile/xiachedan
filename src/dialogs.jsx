@@ -9,12 +9,14 @@ import { readQuiet, saveQuiet, isQuiet } from './quiet';
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   const [name, setName] = useState(me.name);
   const [avatar, setAvatar] = useState(me.avatar);
+  const [department, setDepartment] = useState(me.department || '');
+  const [bio, setBio] = useState(me.bio || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileInput = useRef();
   async function save(event) {
     event.preventDefault(); setBusy(true); setError('');
-    try { const { me: updated } = await api('profile', { name, avatar }); onUpdate(updated); onClose(); notify('个人资料已更新'); }
+    try { const { me: updated } = await api('profile', { name, avatar, department, bio }); onUpdate(updated); onClose(); notify('个人资料已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
   async function avatarUpload(file) {
@@ -24,7 +26,7 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
     try { const result = await upload(file, { purpose: 'avatar' }); setAvatar(result.me.avatar); onUpdate(result.me); notify('头像已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
+  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
 }
 
 export function InviteDialog({ cloud, onClose, notify }) {

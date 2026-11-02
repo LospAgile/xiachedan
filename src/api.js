@@ -56,4 +56,15 @@ export const randomName = () => {
   return descriptions[Math.floor(Math.random() * descriptions.length)] + animals[Math.floor(Math.random() * animals.length)];
 };
 export const formatTime = timestamp => new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+// 最后在线：刚刚、N 分钟前、今天 / 昨天 HH:mm、更早显示日期。
+export function seenText(time) {
+  const minutes = Math.floor((Date.now() - time) / 60000);
+  if (minutes < 1) return '刚刚在线';
+  if (minutes < 60) return `${minutes} 分钟前在线`;
+  const date = new Date(time), today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return `今天 ${formatTime(time)} 在线`;
+  if (date.toDateString() === yesterday.toDateString()) return `昨天 ${formatTime(time)} 在线`;
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日在线`;
+}
 export const formatSize = bytes => bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;

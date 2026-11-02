@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 个人资料：部门和签名（可选）；最后在线时间在最后一个连接断开时记下。
+    CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, department TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '', last_seen INTEGER);
     -- 定时消息：到点由服务器以发送人的身份发出（只支持文字，不带 @提醒）；提醒：到点只通知设置的人自己。
     CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, send_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS reminders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, message_id TEXT NOT NULL, remind_at INTEGER NOT NULL, created_at INTEGER NOT NULL);

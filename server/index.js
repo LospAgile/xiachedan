@@ -158,7 +158,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const users = () => {
     const online = onlineIds();
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
-    return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); return { ...user, removed, online: !removed && online.has(user.id) }; });
+    const profiles = new Map(stmt('SELECT * FROM user_profiles').all().map(row => [row.user_id, row]));
+    return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
+      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null }; });
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -614,8 +616,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!name) throw fail('昵称不能为空');
     const avatar = PRESETS.includes(req.body.avatar) ? req.body.avatar : req.user.avatar;
     stmt('UPDATE users SET name=?, avatar=? WHERE id=?').run(name, avatar, req.user.id);
+    // 部门和签名可选；不传时保持原样。
+    if (req.body.department !== undefined || req.body.bio !== undefined) {
+      const current = stmt('SELECT * FROM user_profiles WHERE user_id=?').get(req.user.id);
+      const department = req.body.department === undefined ? current?.department || '' : textValue(req.body.department, 40);
+      const bio = req.body.bio === undefined ? current?.bio || '' : textValue(req.body.bio, 120);
+      stmt('INSERT INTO user_profiles (user_id,department,bio,last_seen) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET department=excluded.department, bio=excluded.bio').run(req.user.id, department, bio, current?.last_seen ?? null);
+    }
     broadcast({ type: 'users', users: users() });
-    res.json({ me: userById(req.user.id) });
+    const profile = stmt('SELECT department, bio FROM user_profiles WHERE user_id=?').get(req.user.id);
+    res.json({ me: { ...userById(req.user.id), department: profile?.department || '', bio: profile?.bio || '' } });
   });
   app.post('/api/rooms', (req, res) => {
     rateLimit(req, 'rooms', 12);
@@ -1125,7 +1135,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         deliver({ type: 'typing', roomId: room.id, userId: ws.userId }, socket => socket.userId !== ws.userId && canAccess(room, socket.userId));
       });
       ws.on('error', () => ws.terminate());
-      ws.on('close', () => { sockets.delete(ws); if (!closing) broadcast({ type: 'users', users: users() }); });
+      ws.on('close', () => {
+        sockets.delete(ws);
+        if (!closing && ![...sockets].some(socket => socket.userId === ws.userId)) stmt('INSERT INTO user_profiles (user_id,last_seen) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen').run(ws.userId, Date.now());
+        if (!closing) broadcast({ type: 'users', users: users() });
+      });
       ws.send(JSON.stringify({ type: 'ready' }));
       broadcast({ type: 'users', users: users() });
     });
