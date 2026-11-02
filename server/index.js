@@ -29,8 +29,10 @@ function detectMime(file) {
   if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return 'image/jpeg';
   if (['GIF87a', 'GIF89a'].includes(bytes.toString('ascii', 0, 6))) return 'image/gif';
   if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (bytes.toString('ascii', 0, 4) === 'OggS') return 'audio/ogg';
   if (bytes.toString('ascii', 4, 8) === 'ftyp') {
     const brand = bytes.toString('ascii', 8, 12);
+    if (brand === 'M4A ') return 'audio/mp4';
     if (['avif', 'avis', 'heic', 'heix', 'mif1'].includes(brand)) return null;
     return brand === 'qt  ' ? 'video/quicktime' : 'video/mp4';
   }
@@ -790,6 +792,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT OR REPLACE INTO upload_thumbnails VALUES (?,?)').run(target.id, file.filename);
     return { id: file.filename, size: file.size };
   };
+  // 语音：录音格式随浏览器而异（WebM/Opus、MP4/AAC、Ogg），只收 10 MB、5 分钟以内的音频；WebM 文件头不区分音视频，以语音上传时按音频处理。
+  const saveVoice = (req, file) => {
+    const detected = detectMime(file.path);
+    const mime = detected === 'video/webm' ? 'audio/webm' : detected === 'video/mp4' ? 'audio/mp4' : detected;
+    const duration = Number(req.query.duration);
+    if (!mime?.startsWith('audio/') || file.size > 10 * 1024 * 1024) throw fail('语音格式无效');
+    if (!Number.isInteger(duration) || duration < 1 || duration > 300) throw fail('语音时长需在 1 秒到 5 分钟之间');
+    const attachment = { id: file.filename, name: `语音 ${duration} 秒`, mime, size: file.size, duration };
+    stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(attachment.id, req.user.id, req.query.roomId, attachment.name, mime, file.size, 'message', 0, Date.now());
+    stmt('INSERT INTO upload_voice VALUES (?,?)').run(attachment.id, duration);
+    return attachment;
+  };
   app.post('/api/uploads', (req, res, next) => {
     rateLimit(req, 'upload', 30);
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
@@ -812,6 +826,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
       const isAvatar = req.query.purpose === 'avatar';
       if (req.query.thumbnailFor !== undefined) return res.status(201).json({ thumbnail: saveThumbnail(req, file) });
+      if (req.query.voice === '1') return res.status(201).json({ attachment: saveVoice(req, file) });
       // 能识别为图片或视频的才在页面内预览，其余一律作为普通文件，只允许下载。
       const mime = detectMime(file.path) || (isAvatar ? null : 'application/octet-stream');
       if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail('头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
@@ -841,7 +856,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const file = stmt('SELECT * FROM uploads WHERE id=?').get(id);
       if (!file || file.owner_id !== req.user.id || file.room_id !== room.id || file.purpose !== 'message' || file.claimed) throw fail('附件不可用，请重新选择');
       const thumb = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(file.id)?.thumb_id;
-      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}) };
+      const duration = stmt('SELECT duration FROM upload_voice WHERE upload_id=?').get(file.id)?.duration;
+      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}), ...(duration ? { duration } : {}) };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
@@ -885,7 +901,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }
     // 普通文件只能下载：不按文件内容渲染，也不允许执行脚本。
-    const previewable = /^(image|video)\//.test(file.mime);
+    const previewable = /^(image|video|audio)\//.test(file.mime);
     res.set('Content-Type', previewable ? file.mime : 'application/octet-stream');
     if (!previewable) res.set('Content-Security-Policy', "sandbox; default-src 'none'");
     if (!previewable || req.query.download === '1') res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, Play, Pause } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink } from './markdown';
@@ -58,8 +58,24 @@ function FileCard({ file }) {
   </a>;
 }
 
+const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+// 语音条：播放 / 暂停、进度和时长。
+function VoiceNote({ file }) {
+  const audio = useRef();
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const total = file.duration || 0;
+  return <div className="voice-note">
+    <button type="button" className="voice-play" aria-label={playing ? '暂停' : '播放语音'} onClick={() => { const node = audio.current; if (node.paused) node.play().catch(() => {}); else node.pause(); }}>{playing ? <Pause size={16} /> : <Play size={16} />}</button>
+    <span className="voice-track" aria-hidden="true"><i style={{ transform: `scaleX(${total ? Math.min(1, position / total) : 0})` }} /></span>
+    <span className="voice-time">{clock(playing || position ? position : total)}</span>
+    <audio ref={audio} src={mediaUrl(file.id)} preload="none" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setPosition(0); }} onTimeUpdate={event => setPosition(event.currentTarget.currentTime)} />
+  </div>;
+}
+
 function Attachment({ file, privateMode, onPreview }) {
   const [failed, setFailed] = useState(false);
+  if (file.mime.startsWith('audio/') && file.duration) return <VoiceNote file={file} />;
   if (!/^(image|video)\//.test(file.mime)) return <FileCard file={file} />;
   return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'}`}>
     {file.mime.startsWith('image/') ? <button className="image-button" type="button" onClick={() => !privateMode && onPreview(file)} aria-label={privateMode ? '图片内容' : '放大查看图片'}><img src={mediaUrl(file.thumbId || file.id)} alt={file.name} loading="lazy" /></button> : <>

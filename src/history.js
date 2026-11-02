@@ -16,5 +16,5 @@ export const merge = (a, b, history) => {
   return [...messages.values()].map(message => sanitizeMessage(message, history)).filter(Boolean).sort((a, b) => a.seq - b.seq);
 };
 export const readStorage = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
-const attachmentLabel = files => files.some(file => file.mime.startsWith('video/')) ? '[视频]' : files.some(file => file.mime.startsWith('image/')) ? '[图片]' : `[文件] ${files[0]?.name || ''}`;
+const attachmentLabel = files => files.some(file => file.mime.startsWith('audio/')) ? '[语音]' : files.some(file => file.mime.startsWith('video/')) ? '[视频]' : files.some(file => file.mime.startsWith('image/')) ? '[图片]' : `[文件] ${files[0]?.name || ''}`;
 export const previewText = message => message ? message.recalledAt ? message.removedBy ? '消息已被管理员删除' : '消息已撤回' : (message.text && plainText(message.text)) || attachmentLabel(message.attachments) : '还没有消息，来打个招呼吧';

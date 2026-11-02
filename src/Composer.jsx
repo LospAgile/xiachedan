@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Mic, Check } from 'lucide-react';
 import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
@@ -15,6 +15,9 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // 录音：{ recorder, chunks, startedAt, seconds }；最长 5 分钟。
+  const [recording, setRecording] = useState(null);
+  const recordingRef = useRef(null);
   // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
   const [editText, setEditText] = useState('');
   const input = useRef();
@@ -89,6 +92,49 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     requestAnimationFrame(() => node.setSelectionRange(start + mark.length, end + mark.length));
     return true;
   }
+  async function startRecording() {
+    if (!connected) return notify('连接恢复后再发语音');
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return notify('当前环境不支持录音');
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { return notify('没有麦克风权限，请在系统设置里允许虾扯蛋使用麦克风'); }
+    const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find(value => MediaRecorder.isTypeSupported(value));
+    const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+    const state = { recorder, stream, chunks: [], startedAt: Date.now(), roomId: room.id, send: false };
+    recorder.ondataavailable = event => { if (event.data.size) state.chunks.push(event.data); };
+    recorder.onstop = () => { stream.getTracks().forEach(track => track.stop()); if (state.send) sendVoice(state); };
+    recorder.start(250);
+    recordingRef.current = state;
+    setRecording({ seconds: 0 });
+  }
+  function stopRecording(send) {
+    const state = recordingRef.current;
+    if (!state) return;
+    state.send = send; recordingRef.current = null; setRecording(null);
+    state.recorder.stop();
+  }
+  async function sendVoice(state) {
+    const duration = Math.round((Date.now() - state.startedAt) / 1000);
+    if (duration < 1) return notify('说话时间太短');
+    const blob = new Blob(state.chunks, { type: state.recorder.mimeType || 'audio/webm' });
+    setSending(true);
+    try {
+      const { attachment } = await upload(new File([blob], 'voice', { type: blob.type }), { roomId: state.roomId, voice: '1', duration: String(Math.min(duration, 300)) });
+      const { message } = await api('messages', { roomId: state.roomId, text: '', attachmentIds: [attachment.id], clientId: uid() });
+      onSent(message);
+    } catch (error) { notify(error.message); } finally { setSending(false); }
+  }
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => {
+      const state = recordingRef.current;
+      if (!state) return;
+      const seconds = Math.floor((Date.now() - state.startedAt) / 1000);
+      if (seconds >= 300) stopRecording(true); else setRecording({ seconds });
+    }, 250);
+    return () => clearInterval(timer);
+  }, [Boolean(recording)]);
+  useEffect(() => () => { const state = recordingRef.current; if (state) { state.send = false; state.recorder.stop(); } }, [room.id]);
   // 在光标处插入表情，编辑和普通输入都适用。
   function insertText(value) {
     const node = textarea.current;
@@ -161,7 +207,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
       <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
     </div>)}</div>}
-    <div className="composer-row">
+    <div className={`composer-row ${recording ? 'recording' : ''}`}>
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
       onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - 2 * 36, label: '添加附件', items: [
@@ -196,7 +242,12 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
         }} />
       <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 支持 **粗体** `代码` 等简单格式'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    {recording ? <>
+      <div className="recording-bar" role="status"><i className="recording-dot" />正在录音 {Math.floor(recording.seconds / 60)}:{String(recording.seconds % 60).padStart(2, '0')}<small>最长 5 分钟</small></div>
+      <IconButton icon={X} label="取消录音" className="round-button glass" onClick={() => stopRecording(false)} />
+      <button className="send-button round-button" onClick={() => stopRecording(true)} aria-label="发送语音"><Check size={19} strokeWidth={2.2} /></button>
+    </> : !editing && !draft.text.trim() && !draft.files.length ? <button className="send-button round-button mic-button" onClick={startRecording} disabled={sending || !connected} aria-label="录制语音" title="录制语音">{sending ? <LoaderCircle size={19} className="spin" /> : <Mic size={19} strokeWidth={2} />}</button>
+    : <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 支持 **粗体** `代码` 等简单格式'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>}
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>

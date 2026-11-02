@@ -764,3 +764,18 @@ button.message-read-status.is-read { color: var(--text-1); }
 .audit-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .audit-list li { display: flex; gap: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .audit-list time { flex: none; width: 150px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* 语音 */
+.composer-row.recording .composer, .composer-row.recording .attach-button { display: none; }
+.recording-bar { flex: 1; display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 16px; border-radius: 23px; background: var(--glass-solid); box-shadow: var(--glass-edge), var(--shadow-1); font-variant-numeric: tabular-nums; }
+.recording-bar small { margin-left: auto; color: var(--text-2); font-size: 11px; }
+.recording-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .recording-dot { animation: none; } }
+.voice-note { display: flex; align-items: center; gap: 10px; min-width: 200px; padding: 8px 10px 4px; }
+.voice-play { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; }
+.mine .voice-play { background: #fff; color: var(--accent); }
+.voice-track { flex: 1; height: 4px; border-radius: 2px; background: var(--fill-3); overflow: hidden; }
+.voice-track i { display: block; height: 100%; background: currentColor; transform-origin: left; }
+.voice-time { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mine .voice-track { background: rgba(255, 255, 255, .35); }
