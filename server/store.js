@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 收藏：每人自己的收藏夹，只记消息标识；消息撤回或自己失去访问权后不再列出。
+    CREATE TABLE IF NOT EXISTS saved_messages (user_id TEXT NOT NULL, message_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY (user_id, message_id));
     -- 会话内置顶的消息：群主、空间管理者或私聊双方可以置顶，每个会话最多 20 条。
     CREATE TABLE IF NOT EXISTS room_pins (room_id TEXT NOT NULL, message_id TEXT NOT NULL, pinned_by TEXT NOT NULL, pinned_at INTEGER NOT NULL, PRIMARY KEY (room_id, message_id));
     -- 语音消息的时长（秒），发送时随附件一起下发。

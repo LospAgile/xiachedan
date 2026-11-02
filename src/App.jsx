@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
@@ -29,6 +29,8 @@ export default function App() {
   // 当前会话的置顶消息；横条依次显示，点一下跳到那条消息并换到下一条。
   const [pins, setPins] = useState({ roomId: null, pins: [], canPin: false });
   const [pinIndex, setPinIndex] = useState(0);
+  // 自己收藏的消息：菜单据此显示「收藏 / 取消收藏」，收藏夹弹窗列出全部。
+  const [saved, setSaved] = useState([]);
   const [reactingTo, setReactingTo] = useState(null);
   const [selection, setSelection] = useState(null);
   const [forwarding, setForwarding] = useState(null);
@@ -69,7 +71,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   mutedRooms.current = new Set(conversations.filter(room => room.muted).map(room => room.id));
@@ -151,6 +153,12 @@ export default function App() {
   }, []);
   useEffect(() => { setSelection(null); setReactingTo(null); }, [selected]);
   useEffect(() => {
+    if (!state?.me.id) return;
+    let alive = true;
+    api('saved').then(result => { if (alive) setSaved(result.items); }).catch(() => {});
+    return () => { alive = false; };
+  }, [state?.me.id, savedVersion, historyVersion]);
+  useEffect(() => {
     if (!state?.me.id || !selected) return;
     let alive = true;
     api(`room-pins?roomId=${encodeURIComponent(selected)}`).then(result => { if (alive) { setPins({ roomId: selected, ...result }); setPinIndex(0); } }).catch(() => {});
@@ -209,6 +217,10 @@ export default function App() {
     notify(`已转发到「${target.name}」`);
     await refresh();
   }
+  async function toggleSaved(message, value) {
+    try { await api('saved', { messageId: message.id, saved: value }); setSaved((await api('saved')).items); notify(value ? '已收藏' : '已取消收藏'); }
+    catch (error) { notify(error.message); }
+  }
   async function togglePin(message, pinned) {
     try { const result = await api('room-pins', { roomId: message.roomId, messageId: message.id, pinned }); setPins(previous => ({ ...previous, roomId: message.roomId, pins: result.pins })); setPinIndex(0); notify(pinned ? '已置顶这条消息' : '已取消置顶'); }
     catch (error) { notify(error.message); }
@@ -255,6 +267,7 @@ export default function App() {
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
     const canPin = pins.roomId === message.roomId && pins.canPin && !message.recalledAt;
     const pinned = pins.pins.some(item => item.message.id === message.id);
+    const isSaved = saved.some(item => item.message.id === message.id);
     const act = action => {
       const current = messageContext.current;
       if (current.scope !== conversationScope) return;
@@ -263,6 +276,7 @@ export default function App() {
       if (action === 'recall') setRecalling(latest);
       if (action === 'remove') setRemovingMessage(latest);
       if (action === 'pin' || action === 'unpin') togglePin(latest, action === 'pin');
+      if (action === 'save' || action === 'unsave') toggleSaved(latest, action === 'save');
       if (action === 'reply') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'react') setReactingTo(latest.id);
       if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
@@ -273,12 +287,13 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canPin, pinned, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRecall, canRemove }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
+      ...(canReply ? [{ id: isSaved ? 'unsave' : 'save', label: isSaved ? '取消收藏' : '收藏', action: () => act(isSaved ? 'unsave' : 'save') }] : []),
       ...(canPin ? [{ id: pinned ? 'unpin' : 'pin', label: pinned ? '取消置顶消息' : '置顶消息', action: () => act(pinned ? 'unpin' : 'pin') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
       ...(canRemove ? [{ id: 'remove', label: '删除消息（管理员）', action: () => act('remove') }] : []),
@@ -347,7 +362,7 @@ export default function App() {
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表">{resizer}
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions"><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       <nav className="conversation-scroll" aria-label="会话">
         {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{filtered.filter(room => room.pinned).map(roomButton)}</>}
@@ -441,6 +456,14 @@ export default function App() {
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
     {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
+    {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
+      {!saved.length ? <p className="inline-note">还没有收藏。在消息上点右键，选「收藏」。</p> : <div className="history-results saved-list">{saved.map(item => {
+        const target = rooms.find(candidate => candidate.id === item.message.roomId);
+        return <div className="saved-row" key={item.message.id}><SearchResult message={item.message} term="" avatar={<Avatar user={userMap[item.message.senderId]} size={24} />}
+          title={`${userMap[item.message.senderId]?.name || item.message.bot || '成员'}${target ? ` · ${target.name}` : ''}`} privateMode={privateMode} onJump={message => { setModal(null); jumpToMessage(message); }} />
+          <IconButton icon={X} label="取消收藏" size={14} onClick={() => toggleSaved(item.message, false)} /></div>;
+      })}</div>}
+    </Modal>}
     {groupAction?.type === 'webhooks' && room && room.kind !== 'direct' && <WebhooksDialog room={room} notify={notify} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'name' && room?.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
     {groupAction?.type === 'announcement' && room?.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}

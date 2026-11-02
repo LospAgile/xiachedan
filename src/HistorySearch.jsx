@@ -8,6 +8,7 @@ const stamp = timestamp => new Date(timestamp).toDateString() === new Date().toD
   : `${new Date(timestamp).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${formatTime(timestamp)}`;
 
 function Highlight({ text, query }) {
+  if (!query) return text;
   const lower = text.toLowerCase(), needle = query.toLowerCase(), parts = [];
   for (let start = 0, index; start < text.length; start = index + needle.length) {
     index = lower.indexOf(needle, start);

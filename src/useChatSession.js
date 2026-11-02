@@ -17,6 +17,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const [historyVersion, setHistoryVersion] = useState(0);
   // 会话置顶消息变化的计数：界面据此重新读取置顶列表。
   const [pinsVersion, setPinsVersion] = useState(0);
+  const [savedVersion, setSavedVersion] = useState(0);
   const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const reconnect = useRef();
   const activeRoom = useRef(selected);
@@ -175,6 +176,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
+        if (data.type === 'saved') setSavedVersion(version => version + 1);
       };
       socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
       socket.onerror = () => socket.close();
@@ -222,5 +224,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion };
 }

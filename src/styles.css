@@ -790,3 +790,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .pinned-bar .icon-button { width: 24px; height: 24px; flex: none; }
 .pinned-bar ~ .announcement-banner { top: 116px; }
 @media (hover: hover) and (pointer: fine) { .pinned-open:hover { background: var(--fill-1); } }
+.space-actions { display: inline-flex; gap: 2px; }
+.saved-list { max-height: 60vh; overflow-y: auto; }
+.saved-row { display: flex; align-items: center; gap: 4px; }
+.saved-row .history-result { flex: 1; min-width: 0; }
+.compact-sidebar .space-actions .icon-button:first-child { display: none; }

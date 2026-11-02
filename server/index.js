@@ -485,7 +485,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -729,6 +729,27 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 收藏夹：最近收藏的在前，最多列 200 条；撤回、清空或已无权访问的消息不列出。
+  app.get('/api/saved', (req, res) => {
+    const rows = stmt(`SELECT s.saved_at AS savedAt, m.* FROM saved_messages s JOIN messages m ON m.id=s.message_id
+      WHERE s.user_id=? AND m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) ORDER BY s.saved_at DESC LIMIT 200`).all(req.user.id, clearedThroughSeq());
+    const rooms = new Map();
+    const allowed = row => { if (!rooms.has(row.room_id)) rooms.set(row.room_id, stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id)); return canAccess(rooms.get(row.room_id), req.user.id); };
+    res.json({ items: rows.filter(allowed).map(row => ({ savedAt: row.savedAt, message: serializeMessage(row) })) });
+  });
+  app.post('/api/saved', (req, res) => {
+    rateLimit(req, 'saved', 60);
+    const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
+    if (!message || message.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
+    requireRoom(message.room_id, req.user.id);
+    if (req.body.saved === false) stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, message.id);
+    else {
+      if (recalledAt(message.id)) throw fail('消息已撤回');
+      stmt('INSERT OR IGNORE INTO saved_messages VALUES (?,?,?)').run(req.user.id, message.id, Date.now());
+    }
+    deliver({ type: 'saved' }, socket => socket.userId === req.user.id);
+    res.json({ ok: true });
   });
   // 会话内置顶消息。
   const canPin = (room, user) => room.kind === 'direct' || isManager(user) || (room.kind === 'group' && groupSettings(room).ownerId === user.id);
