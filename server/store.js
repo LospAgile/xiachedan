@@ -66,6 +66,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 话题：话题里的回复属于同一会话，但不出现在主时间线，也不计入会话未读；根消息上显示回复数。
+    CREATE TABLE IF NOT EXISTS message_threads (message_id TEXT PRIMARY KEY, root_id TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS message_threads_root ON message_threads(root_id);
     -- 个人资料：部门和签名（可选）；最后在线时间在最后一个连接断开时记下。
     CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, department TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '', last_seen INTEGER);
     -- 定时消息：到点由服务器以发送人的身份发出（只支持文字，不带 @提醒）；提醒：到点只通知设置的人自己。

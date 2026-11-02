@@ -107,7 +107,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const votes = stmt('SELECT user_id, option_index FROM poll_votes WHERE message_id=? ORDER BY voted_at, rowid').all(id);
     return { multiple: Boolean(poll.multiple), closedAt: poll.closed_at, options: JSON.parse(poll.options).map((text, index) => ({ text, voters: votes.filter(vote => vote.option_index === index).map(vote => vote.user_id) })) };
   };
-  const serializeMessage = row => row ? { ...baseMessage(row), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const NOT_THREAD = 'id NOT IN (SELECT message_id FROM message_threads)';
+  const threadOf = id => stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(id)?.root_id || null;
+  const threadInfo = id => {
+    const row = stmt(`SELECT COUNT(*) AS count, MAX(m.created_at) AS lastAt FROM message_threads t JOIN messages m ON m.id=t.message_id
+      WHERE t.root_id=? AND m.id NOT IN (SELECT message_id FROM message_recalls)`).get(id);
+    if (!row.count) return null;
+    const participants = stmt(`SELECT DISTINCT m.sender_id AS id FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? ORDER BY m.seq DESC LIMIT 3`).all(id).map(item => item.id);
+    return { count: row.count, lastAt: row.lastAt, participants };
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -183,7 +192,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)),
+      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
       ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   const stateFor = user => {
     const rooms = roomsFor(user.id);
@@ -429,6 +438,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
       broadcast({ type: 'message-recalled', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
+      const root = threadOf(id);
+      if (root) broadcast({ type: 'message-thread', roomId: row.room_id, rootId: root, thread: threadInfo(root) }, row.room_id);
     }
   };
   // 空间管理者：账号模式是管理员和超级管理员，局域网模式是空间创建者。
@@ -499,7 +510,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -520,7 +531,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
         AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
-      FROM messages WHERE room_id=? AND seq>?`);
+      FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD}`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
       const afterSeq = Object.hasOwn(cursors, room.id) ? cursors[room.id] : 0;
@@ -749,8 +760,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.get('/api/messages', (req, res) => {
     const room = requireRoom(req.query.roomId, req.user.id);
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
-    const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
+    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
+  app.get('/api/thread', (req, res) => {
+    const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);
+    if (!root || root.seq <= clearedThroughSeq()) throw fail('话题不存在', 404);
+    requireRoom(root.room_id, req.user.id);
+    const replies = stmt('SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? ORDER BY m.seq LIMIT 500').all(root.id);
+    res.json({ root: withReads([serializeMessage(root)])[0], replies: withReads(replies.map(serializeMessage)) });
   });
   // 定时消息：最早 1 分钟后、最晚 30 天内；每人最多 50 条待发送。
   const timeValue = value => { const time = Number(value); if (!Number.isSafeInteger(time) || time < Date.now() + scheduleMinLead || time > Date.now() + 30 * 86400000) throw fail('时间需要在 1 分钟以后、30 天以内'); return time; };
@@ -1088,6 +1107,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
       if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
     }
+    // 话题回复：根消息必须是同一会话里仍可见的普通消息（话题里的回复不能再开话题）。
+    const threadRoot = req.body.threadOf === undefined || req.body.threadOf === null ? null : req.body.threadOf;
+    if (threadRoot !== null) {
+      const root = typeof threadRoot === 'string' && threadRoot.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(threadRoot);
+      if (!root || root.room_id !== room.id || root.seq <= clearedThroughSeq() || recalledAt(root.id) || threadOf(root.id)) throw fail('话题不可用');
+    }
     // @提及必须是会话成员且正文里确实写了「@名字」，避免看不见的提醒；@所有人在群聊里人人可用，大厅仅空间管理者可用。
     const mentionInput = req.body.mentions === undefined ? [] : req.body.mentions;
     if (!Array.isArray(mentionInput) || mentionInput.length > 50 || mentionInput.some(value => typeof value !== 'string')) throw fail('提及的成员无效');
@@ -1108,11 +1133,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id IN (?,?)').run(file.id, file.thumbId || file.id);
       if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
+      if (threadRoot) stmt('INSERT INTO message_threads VALUES (?,?)').run(id, threadRoot);
       for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
     broadcast({ type: 'message', message }, room.id);
+    if (threadRoot) broadcast({ type: 'message-thread', roomId: room.id, rootId: threadRoot, thread: threadInfo(threadRoot) }, room.id);
     res.status(201).json({ message });
   });
   app.get('/api/media', (req, res) => {

@@ -19,6 +19,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   // 会话置顶消息变化的计数：界面据此重新读取置顶列表。
   const [pinsVersion, setPinsVersion] = useState(0);
   const [savedVersion, setSavedVersion] = useState(0);
+  const [threadTick, setThreadTick] = useState({ rootId: null, n: 0 });
   const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
   const reconnect = useRef();
   const activeRoom = useRef(selected);
@@ -133,8 +134,12 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (message.recalledAt) syncHistory([message]);
     message = sanitizeMessage(message, historyRef.current);
     if (!message) return;
-    setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
-    setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
+    // 话题里的回复不进主时间线，只通知打开着的话题面板刷新。
+    if (message.threadOf) setThreadTick(tick => ({ rootId: message.threadOf, n: tick.n + 1 }));
+    else {
+      setMessages(previous => ({ ...previous, [message.roomId]: merge(previous[message.roomId] || [], [message], historyRef.current) }));
+      setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.id === message.roomId && (!room.lastMessage || room.lastMessage.seq < message.seq) ? { ...room, lastMessage: message } : room) } : previous);
+    }
     const current = stateRef.current;
     const target = current?.rooms.find(room => room.id === message.roomId);
     const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
@@ -182,6 +187,10 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
         if (data.type === 'message-poll') applyPoll(data);
+        if (data.type === 'message-thread') {
+          setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
+          setThreadTick(tick => ({ rootId: data.rootId, n: tick.n + 1 }));
+        }
         if (data.type === 'reminder') {
           const current = stateRef.current, sender = current?.users.find(user => user.id === data.message.senderId);
           notify(`提醒：${privacyRef.current ? '你设置的消息提醒到了' : previewText(data.message).slice(0, 60)}`);
@@ -235,5 +244,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick };
 }
