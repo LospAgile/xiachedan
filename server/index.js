@@ -320,7 +320,43 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   app.use('/api', (req, _res, next) => {
     req.user = authUser(req);
+    if (req.user && cloud) touchDevice(req);
     next(req.user ? undefined : fail(cloud ? '请先登录并等待管理员审核通过' : '请先加入空间', 401));
+  });
+  // 登录设备：每个登录会话一行，最多每分钟更新一次最后活跃时间。
+  const touchDevice = req => {
+    const tokenHash = auth.tokenHash(req), now = Date.now();
+    const row = stmt('SELECT last_seen FROM session_devices WHERE token_hash=?').get(tokenHash);
+    if (row && now - row.last_seen < 60000) return;
+    const agent = textValue(req.get('User-Agent'), 300), ip = textValue(req.ip || req.socket.remoteAddress, 64);
+    if (row) stmt('UPDATE session_devices SET last_seen=?, ip=?, user_agent=? WHERE token_hash=?').run(now, ip, agent, tokenHash);
+    else stmt('INSERT INTO session_devices VALUES (?,?,?,?,?)').run(tokenHash, agent, ip, now, now);
+  };
+  const requireCloud = () => { if (!cloud) throw fail('局域网模式没有登录设备管理', 403); };
+  app.get('/api/sessions', (req, res) => {
+    requireCloud();
+    stmt('DELETE FROM session_devices WHERE token_hash NOT IN (SELECT token_hash FROM sessions)').run();
+    const current = auth.tokenHash(req);
+    const rows = stmt(`SELECT s.token_hash, s.created_at, s.expires_at, d.user_agent, d.ip, d.last_seen FROM sessions s LEFT JOIN session_devices d ON d.token_hash=s.token_hash
+      WHERE s.user_id=? AND s.expires_at>? ORDER BY COALESCE(d.last_seen, s.created_at) DESC`).all(req.user.id, Date.now());
+    res.json({ sessions: rows.map(row => ({ id: row.token_hash, current: row.token_hash === current, userAgent: row.user_agent || '', ip: row.ip || '',
+      createdAt: row.created_at, lastSeen: row.last_seen || row.created_at, expiresAt: row.expires_at })) });
+  });
+  // 让某个设备下线，或一次让除当前设备以外的全部下线；对应的实时连接立即断开。
+  app.post('/api/sessions/revoke', (req, res) => {
+    requireCloud();
+    rateLimit(req, 'sessions', 30);
+    const current = auth.tokenHash(req);
+    const targets = req.body?.others === true
+      ? stmt('SELECT token_hash FROM sessions WHERE user_id=? AND token_hash<>?').all(req.user.id, current).map(row => row.token_hash)
+      : [req.body?.id].filter(id => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id) && id !== current && stmt('SELECT 1 FROM sessions WHERE token_hash=? AND user_id=?').get(id, req.user.id));
+    if (!targets.length && req.body?.others !== true) throw fail('找不到这个设备，或它就是当前设备', 404);
+    for (const tokenHash of targets) {
+      stmt('DELETE FROM sessions WHERE token_hash=?').run(tokenHash);
+      stmt('DELETE FROM session_devices WHERE token_hash=?').run(tokenHash);
+      for (const socket of sockets) if (socket.sessionHash === tokenHash) socket.close(4001, 'session-revoked');
+    }
+    res.json({ revoked: targets.length });
   });
   app.get('/api/state', (req, res) => res.json(stateFor(req.user)));
   app.post('/api/remove-member', (req, res) => {

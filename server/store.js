@@ -66,6 +66,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 账号模式的登录设备：按登录会话记下设备描述、来源地址和最后活跃时间，用于「登录设备」列表。
+    CREATE TABLE IF NOT EXISTS session_devices (token_hash TEXT PRIMARY KEY, user_agent TEXT NOT NULL, ip TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
     -- 编辑过的消息记下最后一次编辑时间，界面显示「已编辑」。
     CREATE TABLE IF NOT EXISTS message_edits (message_id TEXT PRIMARY KEY, edited_at INTEGER NOT NULL);
     -- 群机器人：外部系统凭地址里的令牌向一个会话发消息；只保存令牌摘要。机器人发的消息另记名字，删掉机器人后仍能显示。

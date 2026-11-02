@@ -564,7 +564,7 @@ button.message-read-status.is-read { color: var(--text-1); }
 .connection-card span { font: 12px/16px var(--font-mono); overflow: hidden; text-overflow: ellipsis; }
 .connection-card > i { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); flex: none; }
 .connection-card > i.online { background: var(--online); }
-.storage-settings h3, .join-space-heading { margin-top: 24px; font-size: 13px; font-weight: 600; }
+.storage-settings h3, .device-settings h3, .join-space-heading { margin-top: 24px; font-size: 13px; font-weight: 600; }
 .appearance-settings h3 { margin: 16px 0 8px; font-size: 13px; font-weight: 600; }
 .segmented-control.three { grid-template-columns: repeat(3, 1fr); }
 :root[data-theme="light"] .privacy-toggle.enabled { background: var(--accent); }
@@ -722,3 +722,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .message-text blockquote { margin: 0; padding: 0 0 0 9px; border-left: 3px solid currentColor; opacity: .85; }
 .message-text ul, .message-text ol { margin: 0; padding-left: 20px; white-space: normal; }
 .mine .message-text code, .mine .message-text pre { background: rgba(0, 0, 0, .18); }
+.device-list { display: flex; flex-direction: column; margin: 8px 0; padding: 0; list-style: none; }
+.device-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.device-list li span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.device-list small { color: var(--text-2); font-size: 11px; }
+.device-list .me-tag { margin-left: 6px; }

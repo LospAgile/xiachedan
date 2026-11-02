@@ -144,6 +144,7 @@ export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, 
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
+    {cloud && <DeviceSettings notify={notify} />}
     {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
     {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
@@ -250,6 +251,35 @@ export function RecallDialog({ message, onClose, onRecalled }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={recall}>{busy ? '正在撤回…' : '确认撤回'}</button></div>
   </Modal>;
+}
+
+// 从浏览器标识里认出系统和应用，够用就好。
+function deviceName(agent) {
+  const system = /iPhone|iPad/.test(agent) ? 'iOS' : /Android/.test(agent) ? 'Android' : /Mac OS X|Macintosh/.test(agent) ? 'macOS' : /Windows/.test(agent) ? 'Windows' : /Linux/.test(agent) ? 'Linux' : '未知系统';
+  const app = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome' : /Version\/[\d.]+.*Safari\//.test(agent) ? 'Safari' : /AppleWebKit|WebView2/.test(agent) ? '桌面客户端' : '浏览器';
+  return `${system} · ${app}`;
+}
+
+function DeviceSettings({ notify }) {
+  const [sessions, setSessions] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const load = () => api('sessions').then(result => setSessions(result.sessions)).catch(failure => setError(failure.message));
+  useEffect(() => { load(); }, []);
+  async function revoke(body, message) {
+    setBusy(true); setError('');
+    try { await api('sessions/revoke', body); notify(message); await load(); }
+    catch (failure) { setError(failure.message); } finally { setBusy(false); }
+  }
+  const when = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return <section className="device-settings"><h3>登录设备</h3>
+    {!sessions ? <p className="inline-note">正在读取登录设备…</p> : <ul className="device-list">{sessions.map(item => <li key={item.id}>
+      <span><b>{deviceName(item.userAgent)}{item.current && <small className="me-tag">当前</small>}</b><small>{item.ip || '未知地址'} · 最近活跃 {when(item.lastSeen)}</small></span>
+      {!item.current && <button type="button" className="text-button danger-text" disabled={busy} onClick={() => revoke({ id: item.id }, '该设备已下线')}>下线</button>}
+    </li>)}</ul>}
+    {sessions?.length > 1 && <button type="button" className="secondary-button" disabled={busy} onClick={() => revoke({ others: true }, '其他设备已全部下线')}>退出其他所有设备</button>}
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </section>;
 }
 
 function StorageSettings({ cloud, onCleared, notify }) {
