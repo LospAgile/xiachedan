@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
-import { FormattedText } from './markdown';
+import { FormattedText, LinkPreview, firstLink } from './markdown';
 import appIcon from './assets/brand/app-icon.svg';
 
 export const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
@@ -180,6 +180,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
     {message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
+    {message.text && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
     {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
   </>;

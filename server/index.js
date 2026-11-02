@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
 import { createAuth } from './auth.js';
+import { fetchPreview } from './linkPreview.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
@@ -40,6 +41,7 @@ function detectMime(file) {
 export async function startServer({ dataDir = path.join(root, '.data'), port = 4318, host = '0.0.0.0',
   mode = process.env.CHAT_MODE || (process.env.NODE_ENV === 'production' ? 'cloud' : 'local'),
   serveWeb = process.env.CHAT_SERVE_WEB === 'true' || (mode === 'local' && process.env.CHAT_SERVE_WEB !== 'false'),
+  previewFetcher = fetchPreview,
 } = {}) {
   if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
   const cloud = mode === 'cloud';
@@ -689,6 +691,27 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 链接预览：按网址缓存；同一网址同时只抓一次。CHAT_LINK_PREVIEW=off 可以整体关闭。
+  const previewing = new Map();
+  app.get('/api/link-preview', async (req, res) => {
+    if (process.env.CHAT_LINK_PREVIEW === 'off') throw fail('链接预览已关闭', 404);
+    const raw = textValue(req.query.url, 2000);
+    let url;
+    try { url = new URL(raw); } catch { throw fail('链接无效'); }
+    if (!['http:', 'https:'].includes(url.protocol)) throw fail('只能预览网页链接');
+    const key = url.href;
+    const cached = stmt('SELECT * FROM link_previews WHERE url=?').get(key);
+    if (cached && Date.now() - cached.fetched_at < (cached.data ? 86400000 : 3600000)) {
+      if (cached.data) return res.json({ preview: JSON.parse(cached.data) });
+      throw fail(cached.error, 404);
+    }
+    rateLimit(req, 'link-preview', 30);
+    if (!previewing.has(key)) previewing.set(key, previewFetcher(key).then(data => ({ data }), error => ({ error: error.message || '无法预览' })).finally(() => previewing.delete(key)));
+    const result = await previewing.get(key);
+    stmt('INSERT OR REPLACE INTO link_previews VALUES (?,?,?,?)').run(key, result.data ? JSON.stringify(result.data) : null, result.error || null, Date.now());
+    if (!result.data) throw fail(result.error, 404);
+    res.json({ preview: result.data });
   });
   // 会话里发过的图片、视频和文件，最新的在前；撤回或已清空的不列出。
   app.get('/api/room-files', (req, res) => {

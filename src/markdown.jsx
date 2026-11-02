@@ -1,4 +1,5 @@
 import React from 'react';
+import { api } from './api';
 
 // 消息里的简单格式（Markdown 子集）：**粗体**、*斜体*、~~删除线~~、`代码`、```代码块```、> 引用、- 列表、1. 列表、[文字](链接) 和自动识别的网址。
 // 只生成 React 元素、不拼 HTML，链接只放行 http/https。
@@ -84,6 +85,26 @@ export function FormattedText({ text, mentions = [], nameOf, viewerId, tail = nu
     if (block.type === 'ul' || block.type === 'ol') { const List = block.type; return <List key={index}>{block.items.map((item, line) => <li key={line}>{inline(item, tokens, `${index}-${line}`)}</li>)}</List>; }
     return <p key={index}>{inline(block.text, tokens, `${index}`)}{end}</p>;
   })}{list.at(-1)?.type !== 'p' && tail}</div>;
+}
+
+// 正文里第一个网页链接（代码里的不算），用来显示链接预览。
+export const firstLink = text => text.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]+`/g, '')
+  .match(/https?:\/\/[^\s<>]*[^\s<>.,!?;:'")\]，。！？；：）】」]/)?.[0] || null;
+
+const previews = new Map();
+export function LinkPreview({ url }) {
+  const [preview, setPreview] = React.useState(() => previews.get(url)?.value);
+  React.useEffect(() => {
+    let alive = true;
+    if (!previews.has(url)) previews.set(url, { promise: api(`link-preview?url=${encodeURIComponent(url)}`).then(result => result.preview, () => null) });
+    const entry = previews.get(url);
+    entry.promise.then(value => { entry.value = value; if (alive) setPreview(value); });
+    return () => { alive = false; };
+  }, [url]);
+  if (!preview) return null;
+  return <a className="link-preview" href={preview.url} target="_blank" rel="noopener noreferrer" onClick={event => openLink(event, preview.url)}>
+    <small>{preview.site}</small><b>{preview.title}</b>{preview.description && <span>{preview.description}</span>}
+  </a>;
 }
 
 // 侧栏预览、通知里只要纯文字：去掉格式符号。
