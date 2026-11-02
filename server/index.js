@@ -19,6 +19,7 @@ const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet'
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail = (message, status = 400) => Object.assign(new Error(message), { status });
 const textValue = (value, max) => typeof value === 'string' ? value.trim().slice(0, max) : '';
+const sizeText = bytes => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const loopback = address => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address);
 
 function detectMime(file) {
@@ -923,6 +924,37 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT OR REPLACE INTO link_previews VALUES (?,?,?,?)').run(key, result.data ? JSON.stringify(result.data) : null, result.error || null, Date.now());
     if (!result.data) throw fail(result.error, 404);
     res.json({ preview: result.data });
+  });
+  // 导出单个会话为纯文本：只含自己有权访问的会话，按客户端时区显示时间；附件只列文件名和大小。
+  app.get('/api/export', (req, res) => {
+    rateLimit(req, 'export', 10);
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const offset = Number(req.query.tz || 0);
+    if (!Number.isInteger(offset) || Math.abs(offset) > 840) throw fail('时区无效');
+    const time = value => new Date(value - offset * 60000).toISOString().slice(0, 16).replace('T', ' ');
+    const names = new Map(stmt('SELECT id, name FROM users').all().map(user => [user.id, user.name]));
+    const nameOf = id => names.get(id) || '已离开的成员';
+    const senderOf = message => message.bot ? `${message.bot}（机器人）` : nameOf(message.senderId);
+    const members = JSON.parse(room.members);
+    const title = room.kind === 'direct' ? nameOf(members.find(id => id !== req.user.id) || req.user.id) : room.name;
+    const blocks = [];
+    for (const row of stmt('SELECT * FROM messages WHERE room_id=? AND seq>? ORDER BY seq').iterate(room.id, clearedThroughSeq())) {
+      const message = serializeMessage(row);
+      const lines = [`${time(message.createdAt)}  ${senderOf(message)}${message.forwardedFrom ? `（转发自 ${nameOf(message.forwardedFrom.senderId)}）` : ''}${message.editedAt ? '（已编辑）' : ''}`];
+      if (message.recalledAt) lines.push(message.removedBy ? '（消息已被管理员删除）' : '（消息已撤回）');
+      else {
+        const quote = message.replyTo;
+        if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
+        if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
+        else if (message.text) lines.push(message.text);
+        for (const file of message.attachments) lines.push(file.duration ? `[语音] ${file.duration} 秒` : `[附件] ${file.name}（${sizeText(file.size)}）`);
+      }
+      blocks.push(lines.join('\n'));
+    }
+    const header = `虾扯蛋聊天记录\n会话：${title}\n导出时间：${time(Date.now())} · 共 ${blocks.length} 条消息`;
+    const date = time(Date.now()).slice(0, 10).replace(/-/g, '');
+    res.set({ 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`虾扯蛋-${title}-${date}.txt`)}` });
+    res.send([header, ...blocks].join('\n\n') + '\n');
   });
   // 会话里发过的图片、视频和文件，最新的在前；撤回或已清空的不列出。
   app.get('/api/room-files', (req, res) => {

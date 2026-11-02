@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck } from 'lucide-react';
-import { api, formatTime, mediaUrl, nativeTitlebar, seenText } from './api';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
+import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
@@ -284,6 +284,7 @@ export default function App() {
       { id: unreadNow ? 'read' : 'unread', label: unreadNow ? '标为已读' : '标为未读', action: () => unreadNow ? markRead(target) : conversationAction('mark-unread', target.id, conversationScope) },
       { id: pin, label: target.pinned ? '取消置顶' : '置顶对话', action: () => conversationAction(pin, target.id, conversationScope) },
       { id: mute, label: target.muted ? '取消免打扰' : '消息免打扰', action: () => conversationAction(mute, target.id, conversationScope) },
+      { id: 'export', label: '导出聊天记录', action: () => downloadExport(target.id) },
       { id: 'remove', label: '移除对话', action: () => conversationAction('remove', target.id, conversationScope) },
     ], '对话操作');
   }
@@ -460,7 +461,7 @@ export default function App() {
         ? <RoomFiles room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onPreview={setPreview} onJump={jumpToMessage} />
         : panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
-        : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button>
+        : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
           {room.kind === 'group' && <>
             {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
             {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'webhooks' })}><Bot size={16} /><span>群机器人</span><ChevronRight size={14} /></button>}
