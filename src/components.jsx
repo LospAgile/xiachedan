@@ -111,7 +111,8 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   </article>;
 }
 
-export function MessageContextMenu({ menu, onClose, onRecall }) {
+// 右键菜单：items 为 [{ label, onSelect }]，上下方向键在菜单项之间移动。
+export function ContextMenu({ menu, label, items, onClose }) {
   const ref = useRef();
   useEffect(() => {
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
@@ -122,7 +123,16 @@ export function MessageContextMenu({ menu, onClose, onRecall }) {
     window.addEventListener('resize', onClose);
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('blur', onClose); window.removeEventListener('resize', onClose); };
   }, [onClose]);
-  return <div ref={ref} role="menu" aria-label="消息操作" className="message-context-menu" style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - 62)) }}><button autoFocus role="menuitem" onClick={onRecall}>撤回消息</button></div>;
+  const move = event => {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = [...ref.current.querySelectorAll('[role="menuitem"]')];
+    const index = buttons.indexOf(document.activeElement);
+    buttons[(index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+  };
+  return <div ref={ref} role="menu" aria-label={label} className="message-context-menu" onKeyDown={move} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - 16 - items.length * 30)) }}>
+    {items.map((item, index) => <button key={item.label} autoFocus={index === 0} role="menuitem" onClick={() => { onClose(); item.onSelect(); }}>{item.label}</button>)}
+  </div>;
 }
 
 export function ReadDetail({ anchor, message, members, onClose }) {

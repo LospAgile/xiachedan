@@ -120,21 +120,28 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); return { ...user, removed, online: !removed && online.has(user.id) }; });
   };
-  const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
-    .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)) }));
+  const roomsFor = userId => {
+    const preferences = new Map(stmt('SELECT room_id, pinned_at, muted FROM room_preferences WHERE user_id=?').all(userId).map(row => [row.room_id, row]));
+    return stmt('SELECT * FROM rooms ORDER BY created_at').all()
+      .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
+        members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)),
+        pinnedAt: preferences.get(room.id)?.pinned_at || null, muted: Boolean(preferences.get(room.id)?.muted) }));
+  };
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
     return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq() };
   };
-  const broadcast = (event, roomId) => {
+  const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
-    const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
-    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && (!roomId || canAccess(room, socket.userId))) {
+    for (const socket of sockets) if (socket.readyState === WebSocket.OPEN && !isRemoved(socket.userId) && (!cloud || auth.validSocket(socket)) && accepts(socket)) {
       if (socket.bufferedAmount > 1024 * 1024) socket.terminate(); else socket.send(payload);
     }
+  };
+  const broadcast = (event, roomId) => {
+    const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
+    deliver(event, socket => !roomId || canAccess(room, socket.userId));
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -386,6 +393,19 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO rooms (id,name,kind,members,created_at) VALUES (?,?,?,?,?)').run(room.id, room.name, room.kind, JSON.stringify(room.members), Date.now());
     broadcast({ type: 'rooms' }, room.id);
     res.status(201).json({ id: room.id });
+  });
+  // 置顶与免打扰只影响自己；同一账号的其他设备随之刷新。
+  app.post('/api/room-preferences', (req, res) => {
+    rateLimit(req, 'room-preferences', 60);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const { pinned, muted } = req.body;
+    if ((pinned !== undefined && typeof pinned !== 'boolean') || (muted !== undefined && typeof muted !== 'boolean') || (pinned === undefined && muted === undefined)) throw fail('会话设置无效');
+    const current = stmt('SELECT pinned_at, muted FROM room_preferences WHERE user_id=? AND room_id=?').get(req.user.id, room.id);
+    const pinnedAt = pinned === undefined ? current?.pinned_at ?? null : pinned ? current?.pinned_at || Date.now() : null;
+    const mutedValue = muted === undefined ? current?.muted ?? 0 : Number(muted);
+    stmt('INSERT OR REPLACE INTO room_preferences (user_id,room_id,pinned_at,muted) VALUES (?,?,?,?)').run(req.user.id, room.id, pinnedAt, mutedValue);
+    deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ roomId: room.id, pinnedAt, muted: Boolean(mutedValue) });
   });
   app.post('/api/room-members', (req, res) => {
     rateLimit(req, 'members', 20);

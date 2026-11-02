@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, MessageContextMenu, ReadDetail } from './components';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
@@ -19,6 +19,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [roomMenu, setRoomMenu] = useState(null);
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -35,6 +36,7 @@ export default function App() {
   const messageContent = useRef();
   const sticky = useRef(true);
   const firstLoad = useRef(true);
+  const longPress = useRef({ timer: 0, fired: false });
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: setSelected,
@@ -70,7 +72,8 @@ export default function App() {
     observer.observe(content);
     return () => observer.disconnect();
   }, [state?.me.id, state?.rooms.length]);
-  const unreadRooms = JSON.stringify(state?.rooms.filter(room => unread[room.id]?.hasUnread).map(room => room.id) || []);
+  // 免打扰的会话不计入菜单栏与托盘的未读数。
+  const unreadRooms = JSON.stringify(state?.rooms.filter(room => !room.muted && unread[room.id]?.hasUnread).map(room => room.id) || []);
   useEffect(() => {
     window.desktop?.activity?.({ currentRoomId: state?.me.id ? selected : null, unreadRooms: JSON.parse(unreadRooms) }).catch(error => notify(error.message));
   }, [unreadRooms, selected, state?.me.id, notify]);
@@ -103,6 +106,10 @@ export default function App() {
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
   }
+  async function changePreference(target, change) {
+    try { await api('room-preferences', { roomId: target.id, ...change }); await refresh(); }
+    catch (error) { notify(error.message); }
+  }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
     try { const result = await api('rooms', { userId: user.id }); await refresh(); setSelected(result.id); setMobileChat(true); setModal(null); }
@@ -120,7 +127,9 @@ export default function App() {
   if (!room) return <div className="startup-state"><LoaderCircle className="spin" size={18} /><p>正在加载会话…</p></div>;
   const groupMembers = room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
-  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  // 置顶的会话排在各自分组最前，最近置顶的在上。
+  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (b.pinnedAt || 0) - (a.pinnedAt || 0));
   const peer = room.kind === 'direct' ? peerOf(room) : null;
   const isOwner = state.workspace.ownerId === state.me.id;
   const cloud = state.workspace.mode === 'cloud';
@@ -130,8 +139,16 @@ export default function App() {
   const roomButton = target => {
     const status = unread[target.id];
     const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
-    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} onClick={() => openRoom(target.id)}>
-      {roomIcon(target)}<span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span><time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
+    const openMenu = (x, y) => setRoomMenu({ x, y, room: target });
+    // 触屏没有右键：长按 500 毫秒打开同一个菜单，并吞掉随后的点击。
+    const cancelPress = () => clearTimeout(longPress.current.timer);
+    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined}
+      onClick={() => { if (longPress.current.fired) { longPress.current.fired = false; return; } openRoom(target.id); }}
+      onPointerDown={event => { if (event.pointerType !== 'touch') return; const { clientX, clientY } = event; longPress.current = { fired: false, timer: setTimeout(() => { longPress.current.fired = true; openMenu(clientX, clientY); }, 500) }; }}
+      onPointerUp={cancelPress} onPointerCancel={cancelPress} onPointerMove={event => { if (event.pointerType === 'touch' && (Math.abs(event.movementX) > 4 || Math.abs(event.movementY) > 4)) cancelPress(); }}
+      onContextMenu={event => { event.preventDefault(); if (!longPress.current.fired) openMenu(event.clientX, event.clientY); }}
+      onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openMenu(rect.left + 24, rect.bottom); } }}>
+      {roomIcon(target)}<span className="conversation-copy"><span className="conversation-title"><span className="conversation-name"><span className="conversation-label">{target.name}</span>{target.pinnedAt && <Pin className="conversation-flag" size={11} role="img" aria-label="已置顶" />}{target.muted && <BellOff className="conversation-flag" size={11} role="img" aria-label="免打扰" />}</span><time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
         <span className="conversation-preview"><PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
       </span>
     </button>;
@@ -185,7 +202,11 @@ export default function App() {
     {preview && !privateMode && <Modal title={preview.name} onClose={() => setPreview(null)} wide><img className="lightbox-image" src={mediaUrl(preview.id)} alt={preview.name} /></Modal>}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail} />}
-    {contextMenu && <MessageContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} onRecall={() => { setRecalling(contextMenu.message); setContextMenu(null); }} />}
+    {contextMenu && <ContextMenu menu={contextMenu} label="消息操作" onClose={() => setContextMenu(null)} items={[{ label: '撤回消息', onSelect: () => setRecalling(contextMenu.message) }]} />}
+    {roomMenu && <ContextMenu menu={roomMenu} label={`${roomName(roomMenu.room)} 会话操作`} onClose={() => setRoomMenu(null)} items={[
+      { label: roomMenu.room.pinnedAt ? '取消置顶' : '置顶', onSelect: () => changePreference(roomMenu.room, { pinned: !roomMenu.room.pinnedAt }) },
+      { label: roomMenu.room.muted ? '取消免打扰' : '消息免打扰', onSelect: () => changePreference(roomMenu.room, { muted: !roomMenu.room.muted }) },
+    ]} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => { syncHistory([message]); notify('消息已撤回'); }} />}
     {toastElement}
   </div>;

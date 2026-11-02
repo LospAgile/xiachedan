@@ -58,6 +58,11 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 每位成员对会话的个人设置：置顶时间（为空表示未置顶）与免打扰。
+    CREATE TABLE IF NOT EXISTS room_preferences (
+      user_id TEXT NOT NULL, room_id TEXT NOT NULL, pinned_at INTEGER, muted INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, room_id)
+    );
     -- 每条消息、每位接收者仅保存一次实际查看时间。
     CREATE TABLE IF NOT EXISTS message_reads (
       message_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at INTEGER NOT NULL,
