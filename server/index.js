@@ -169,8 +169,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const online = onlineIds();
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
     const profiles = new Map(stmt('SELECT * FROM user_profiles').all().map(row => [row.user_id, row]));
+    const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null }; });
+      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -194,11 +195,23 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
       ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+  // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
+  const muteOf = id => {
+    const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
+    if (!row) return null;
+    if (row.until !== null && row.until <= Date.now()) { stmt('DELETE FROM member_mutes WHERE user_id=?').run(id); return null; }
+    return row.until ?? Infinity;
+  };
+  const requireVoice = user => {
+    const until = muteOf(user.id);
+    if (until) throw fail(until === Infinity ? '你已被管理员禁言' : `你已被管理员禁言，${new Date(until).toLocaleString('zh-CN', { hour12: false })} 后恢复`, 403);
+  };
+  const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: user, workspace: spaceInfo(), users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -459,6 +472,37 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, row.sender_id, 'delete-message', JSON.stringify({ messageId: row.id, roomId: row.room_id, roomName: room.name }), Date.now());
     res.json({ message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(row.id)) });
   });
+  // 禁言与解除：minutes 为 0 或不传表示一直禁言；不能禁言自己和其他管理者。
+  app.post('/api/admin/mute', (req, res) => {
+    requireManager(req);
+    const target = typeof req.body?.userId === 'string' && userById(req.body.userId);
+    if (!target || target.id === req.user.id) throw fail('请选择有效成员');
+    const targetRole = cloud ? stmt('SELECT role FROM accounts WHERE user_id=?').get(target.id)?.role : (target.id === ownerId() ? 'owner' : 'user');
+    if (targetRole && targetRole !== 'user') throw fail('不能禁言管理员', 403);
+    if (req.body.muted === false) {
+      stmt('DELETE FROM member_mutes WHERE user_id=?').run(target.id);
+      stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, target.id, 'unmute', '', Date.now());
+    } else {
+      const minutes = Number(req.body.minutes || 0);
+      if (!Number.isInteger(minutes) || minutes < 0 || minutes > 525600) throw fail('禁言时长无效');
+      const until = minutes ? Date.now() + minutes * 60000 : null;
+      stmt('INSERT OR REPLACE INTO member_mutes VALUES (?,?,?,?)').run(target.id, until, req.user.id, Date.now());
+      stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, target.id, 'mute', minutes ? `${minutes} 分钟` : '直到解除', Date.now());
+    }
+    broadcast({ type: 'users', users: users() });
+    deliver({ type: 'rooms' }, socket => socket.userId === target.id);
+    res.json({ ok: true });
+  });
+  // 消息保留期限：0 表示永久；设置后由定时任务删除更早的消息和附件。
+  app.post('/api/admin/retention', (req, res) => {
+    requireManager(req);
+    const days = Number(req.body?.days);
+    if (![0, 30, 90, 180, 365].includes(days)) throw fail('保留期限只能是 30、90、180、365 天或永久');
+    stmt("INSERT OR REPLACE INTO space_settings VALUES ('retention_days', ?)").run(String(days));
+    stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, req.user.id, 'retention', days ? `${days} 天` : '永久', Date.now());
+    broadcast({ type: 'rooms' });
+    res.json({ retentionDays: days });
+  });
   // 操作日志：账号审核、角色、密码与删除消息等管理操作，最新的在前，每页 50 条。
   app.get('/api/admin/audit', (req, res) => {
     requireManager(req);
@@ -566,6 +610,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 逐条转发到另一个会话：按原顺序生成新消息；附件为目标会话另建记录（同一文件用硬链接，失败时复制），
   // 这样目标会话的成员不需要访问原会话就能下载，任一边撤回也只删除自己那一份。
   app.post('/api/forward', (req, res) => {
+    requireVoice(req.user);
     rateLimit(req, 'forward', 20);
     const target = requireRoom(req.body?.roomId, req.user.id);
     const ids = req.body?.messageIds;
@@ -807,12 +852,42 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.status(201).json({ id, remindAt });
   });
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
+  // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
+  let retentionCheckedAt = 0;
+  const MESSAGE_TABLES = ['message_reads', 'message_recalls', 'message_replies', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const purgeExpired = () => {
+    const days = retentionDays();
+    if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
+    retentionCheckedAt = Date.now();
+    const rows = stmt('SELECT id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000);
+    if (!rows.length) return 0;
+    db.exec('BEGIN');
+    try {
+      for (const row of rows) {
+        for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
+          stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
+          stmt('DELETE FROM uploads WHERE id=?').run(id);
+          stmt('DELETE FROM upload_voice WHERE upload_id=?').run(id);
+          stmt('DELETE FROM upload_thumbnails WHERE upload_id=?').run(id);
+        }
+        for (const table of MESSAGE_TABLES) stmt(`DELETE FROM ${table} WHERE message_id=?`).run(row.id);
+        stmt('DELETE FROM message_replies WHERE reply_to=?').run(row.id);
+        stmt('DELETE FROM message_threads WHERE root_id=?').run(row.id);
+        stmt('DELETE FROM messages WHERE id=?').run(row.id);
+      }
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    cleanFiles();
+    if (rows.length === 500) retentionCheckedAt = 0;
+    return rows.length;
+  };
   const runSchedules = () => {
     const now = Date.now();
+    purgeExpired();
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
       stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
       const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-      if (!canAccess(room, row.sender_id)) continue;
+      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id)) continue;
       const id = randomUUID();
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, row.sender_id, row.text, '[]', `scheduled:${row.id}`, Date.now());
       broadcast({ type: 'message', message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } }, room.id);
@@ -831,6 +906,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/polls', (req, res) => {
     rateLimit(req, 'polls', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireVoice(req.user);
     const question = textValue(req.body?.question, 200);
     const options = Array.isArray(req.body?.options) ? req.body.options.map(option => textValue(option, 100)).filter(Boolean) : [];
     if (!question) throw fail('请输入投票问题');
@@ -1050,6 +1126,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
     if (req.query.purpose !== 'avatar') requireRoom(req.query.roomId, req.user.id);
     if (req.query.thumbnailFor !== undefined) thumbnailTarget(req);
+    // 每人存储上限（CHAT_MAX_USER_BYTES，可选）：超出后不能再上传，删除或清理后恢复。
+    const userQuota = Number(process.env.CHAT_MAX_USER_BYTES || 0);
+    if (userQuota > 0 && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads WHERE owner_id=?').get(req.user.id).n >= userQuota) throw fail('你的存储空间已用完，请联系管理员', 507);
     if (cloud) {
       if (activeUploads >= 4) throw fail('上传服务繁忙，请稍后重试', 429);
       const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
@@ -1084,6 +1163,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/messages', (req, res) => {
     rateLimit(req, 'messages', 120);
     const room = requireRoom(req.body.roomId, req.user.id);
+    requireVoice(req.user);
     const clientId = textValue(req.body.clientId, 80);
     if (!clientId) throw fail('消息标识缺失，请重试');
     const existing = stmt('SELECT * FROM messages WHERE sender_id=? AND client_id=?').get(req.user.id, clientId);

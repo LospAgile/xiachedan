@@ -140,7 +140,7 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit }) {
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged }) {
   const cloud = workspace.mode === 'cloud';
   return <Modal title="设置" subtitle={cloud ? undefined : '所有聊天都通过局域网连接。'} onClose={onClose}>
     <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
@@ -149,7 +149,9 @@ export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, 
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
     <QuietSettings notify={notify} />
     {cloud && <DeviceSettings notify={notify} />}
-    {onAudit && <section className="device-settings"><h3>管理</h3><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button></section>}
+    {onAudit && <section className="device-settings"><h3>管理</h3><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>
+      <label className="toggle-row retention-row">消息保留期限<select aria-label="消息保留期限" value={workspace.retentionDays || 0} onChange={async event => { try { await api('admin/retention', { days: Number(event.target.value) }); await onChanged?.(); notify('保留期限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '永久保留'], [30, '30 天'], [90, '90 天'], [180, '180 天'], [365, '1 年']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}</section>}
     {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
     {window.desktop?.updates && <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />}
     {window.desktop && <>{window.desktop.getState && <DesktopSettings notify={notify} />}
@@ -243,19 +245,19 @@ export function WebhooksDialog({ room, onClose, notify }) {
   </Modal>;
 }
 
-const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息' };
+const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为' };
 // 操作日志：谁在什么时候对谁做了哪项管理操作；被删消息只记会话，不保留内容。
 export function AuditDialog({ onClose }) {
   const [page, setPage] = useState(1);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   useEffect(() => { api(`admin/audit?page=${page}`).then(setResult).catch(failure => setError(failure.message)); }, [page]);
-  const where = entry => { if (entry.action !== 'delete-message') return entry.action === 'role' ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
+  const where = entry => { if (entry.action !== 'delete-message') return ['role', 'mute'].includes(entry.action) ? `（${entry.detail}）` : ''; try { const detail = JSON.parse(entry.detail); return detail.roomName ? `（在「${detail.roomName}」）` : ''; } catch { return ''; } };
   return <Modal title="操作日志" subtitle="管理员的审核、权限、密码和删除消息操作，最新的在前。" wide onClose={onClose}>
     {error && <p className="form-error" role="alert">{error}</p>}
     {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
       <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
-      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
+      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{entry.action === 'retention' ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
     </li>)}</ul>}
     {result?.total > 50 && <div className="account-pagination"><button className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页 · 共 {result.total} 条</span><button className="secondary-button" disabled={page * 50 >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
   </Modal>;
@@ -337,6 +339,24 @@ export function ReminderDialog({ message, onClose, notify }) {
     <TimeChoices value={time} onChange={setTime} />
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={submit}>{busy ? '正在保存…' : '设置提醒'}</button></div>
+  </Modal>;
+}
+
+// 禁言：选时长，或一直禁言到手动解除。
+export function MuteDialog({ user, onClose, onDone }) {
+  const [minutes, setMinutes] = useState(60);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit() {
+    setBusy(true); setError('');
+    try { await api('admin/mute', { userId: user.id, minutes }); onDone(); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={`禁言「${user.name}」`} subtitle="禁言期间不能发消息、发投票或转发，可以随时解除。这次操作会记入操作日志。" onClose={() => !busy && onClose()}>
+    <div className="time-chips">{[[10, '10 分钟'], [60, '1 小时'], [1440, '1 天'], [10080, '7 天'], [0, '直到解除']].map(([value, label]) =>
+      <button type="button" key={value} className={`secondary-button ${minutes === value ? 'selected' : ''}`} onClick={() => setMinutes(value)}>{label}</button>)}</div>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button danger-button" disabled={busy} onClick={submit}>{busy ? '正在禁言…' : '禁言'}</button></div>
   </Modal>;
 }
 

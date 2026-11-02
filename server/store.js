@@ -66,6 +66,10 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 禁言：管理员可以让成员一段时间（或一直）不能发言；until 为空表示直到解除。
+    CREATE TABLE IF NOT EXISTS member_mutes (user_id TEXT PRIMARY KEY, until INTEGER, muted_by TEXT NOT NULL, muted_at INTEGER NOT NULL);
+    -- 空间设置：retention_days 消息保留天数，0 表示永久保留。
+    CREATE TABLE IF NOT EXISTS space_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     -- 话题：话题里的回复属于同一会话，但不出现在主时间线，也不计入会话未读；根消息上显示回复数。
     CREATE TABLE IF NOT EXISTS message_threads (message_id TEXT PRIMARY KEY, root_id TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS message_threads_root ON message_threads(root_id);

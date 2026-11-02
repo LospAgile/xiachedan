@@ -846,3 +846,7 @@ button.message-read-status.is-read { color: var(--text-1); }
 .thread-composer { display: flex; align-items: flex-end; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
 .thread-composer textarea { flex: 1; min-height: 40px; max-height: 120px; padding: 8px 10px; border-radius: 12px; background: var(--fill-1); }
 .thread-composer .send-button { width: 36px; height: 36px; }
+.muted-tag { margin-left: 6px; padding: 0 5px; border-radius: 6px; background: rgba(201, 52, 43, .14); color: var(--danger-text); font-size: 10px; line-height: 16px; font-weight: 600; }
+.muted-notice { margin: 0 16px 14px; padding: 12px 16px; border-radius: 16px; text-align: center; color: var(--text-2); font-size: 13px; }
+.retention-row { justify-content: space-between; margin-top: 10px; }
+.retention-row select { width: auto; min-height: 30px; padding: 0 8px; border-radius: 8px; border: 0; background: var(--fill-1); color: var(--text-1); }
