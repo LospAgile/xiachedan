@@ -931,12 +931,28 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ? stmt('SELECT * FROM rooms').all().filter(room => canAccess(room, req.user.id)).map(room => room.id)
       : [requireRoom(req.query.roomId, req.user.id).id];
     const query = textValue(req.query.q, 100);
-    if (!query || !roomIds.length) return res.json({ messages: [] });
+    // 可选筛选：发送人、时间范围（毫秒时间戳）、类型（图片、视频、文件、链接）；有筛选时关键词可以为空。
+    const filters = [], args = [];
+    if (typeof req.query.sender === 'string' && req.query.sender) { filters.push('sender_id=?'); args.push(req.query.sender.slice(0, 100)); }
+    for (const [key, op] of [['from', '>='], ['to', '<=']]) if (req.query[key] !== undefined) {
+      const time = Number(req.query[key]);
+      if (!Number.isSafeInteger(time)) throw fail('时间范围无效');
+      filters.push(`created_at${op}?`); args.push(time);
+    }
+    const kinds = { image: "json_extract(value, '$.mime') LIKE 'image/%'", video: "json_extract(value, '$.mime') LIKE 'video/%'",
+      file: "json_extract(value, '$.mime') NOT LIKE 'image/%' AND json_extract(value, '$.mime') NOT LIKE 'video/%' AND json_extract(value, '$.mime') NOT LIKE 'audio/%'", voice: "json_extract(value, '$.mime') LIKE 'audio/%'" };
+    if (req.query.type !== undefined) {
+      if (req.query.type === 'link') filters.push("(text LIKE '%http://%' OR text LIKE '%https://%')");
+      else if (kinds[req.query.type]) filters.push(`EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE ${kinds[req.query.type]})`);
+      else throw fail('类型无效');
+    }
+    if ((!query && !filters.length) || !roomIds.length) return res.json({ messages: [] });
     rateLimit(req, 'search', 120);
     const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
+    const keyword = query ? "AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))" : '';
     const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
-      AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))
-      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), pattern, pattern);
+      ${keyword} ${filters.map(filter => `AND ${filter}`).join(' ')}
+      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), ...(query ? [pattern, pattern] : []), ...args);
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });

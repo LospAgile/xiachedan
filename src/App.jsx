@@ -453,7 +453,7 @@ export default function App() {
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : panelView === 'files' ? '图片与文件' : '会话成员'}>{panelView === 'files'
         ? <RoomFiles room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onPreview={setPreview} onJump={jumpToMessage} />
         : panelView === 'history'
-        ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
+        ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button>
           {room.kind === 'group' && <>
             {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
