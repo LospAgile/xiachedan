@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
@@ -133,7 +133,7 @@ export default function App() {
     return () => observer.disconnect();
   }, [state?.me.id, state?.rooms.length]);
   // 免打扰的会话不计入菜单栏与托盘的未读数，被 @ 时除外。
-  const unreadRooms = JSON.stringify(loggingOut ? [] : conversations.filter(room => !room.hidden && (!room.muted || unread[room.id]?.mentioned) && unread[room.id]?.hasUnread).map(room => room.id));
+  const unreadRooms = JSON.stringify(loggingOut ? [] : conversations.filter(room => !room.hidden && (!room.muted || unread[room.id]?.mentioned) && (unread[room.id]?.hasUnread || room.markedUnread)).map(room => room.id));
   useEffect(() => {
     window.desktop?.activity?.({ currentRoomId: state?.me.id && !loggingOut ? selected : null, unreadRooms: JSON.parse(unreadRooms) }).catch(error => notify(error.message));
   }, [unreadRooms, selected, state?.me.id, loggingOut, notify]);
@@ -251,6 +251,7 @@ export default function App() {
   }
   function openRoom(id) {
     if (!restoreConversation(id)) return;
+    if (conversations.find(room => room.id === id)?.markedUnread) conversationAction('mark-read', id, conversationScope);
     setSelected(id); setMobileChat(true); setReadDetail(null); setContextMenu(null); setPanelView('members');
   }
   function showContextMenu(event, options, items, label) {
@@ -263,10 +264,18 @@ export default function App() {
       setContextMenu({ x: event.clientX, y: event.clientY, items, label });
     }
   }
+  // 标为已读：本机的已读位置推进到最新一条，不替别人发已读回执；标为未读只是给自己留个记号。
+  function markRead(target) {
+    const seq = target.lastMessage?.seq || 0;
+    setLastRead(previous => seq > (previous[target.id] || 0) ? { ...previous, [target.id]: seq } : previous);
+    if (target.markedUnread) conversationAction('mark-read', target.id, conversationScope);
+  }
   function conversationMenu(event, target) {
     const pin = target.pinned ? 'unpin' : 'pin';
     const mute = target.muted ? 'unmute' : 'mute';
-    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted }, [
+    const unreadNow = Boolean(unread[target.id]?.hasUnread || target.markedUnread);
+    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted, unread: unreadNow }, [
+      { id: unreadNow ? 'read' : 'unread', label: unreadNow ? '标为已读' : '标为未读', action: () => unreadNow ? markRead(target) : conversationAction('mark-unread', target.id, conversationScope) },
       { id: pin, label: target.pinned ? '取消置顶' : '置顶对话', action: () => conversationAction(pin, target.id, conversationScope) },
       { id: mute, label: target.muted ? '取消免打扰' : '消息免打扰', action: () => conversationAction(mute, target.id, conversationScope) },
       { id: 'remove', label: '移除对话', action: () => conversationAction('remove', target.id, conversationScope) },
@@ -360,13 +369,14 @@ export default function App() {
     }} />;
   const roomButton = target => {
     const status = unread[target.id];
-    const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
-    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''} ${status?.mentioned ? 'mentioned' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} aria-haspopup="menu"
+    const label = status?.hasUnread ? status.exact ? `${status.count} 条未读消息` : '有新消息' : '标为未读';
+    const showUnread = status?.hasUnread || target.markedUnread;
+    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${showUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''} ${status?.mentioned ? 'mentioned' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} aria-haspopup="menu"
       onClick={() => { if (!consumeLongPress(longPress)) openRoom(target.id); }} {...longPressHandlers(longPress, (x, y) => conversationMenu(pressEvent(x, y), target))}
       onContextMenu={event => { if (longPress.current.fired) event.preventDefault(); else conversationMenu(event, target); }}
       onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { const rect = event.currentTarget.getBoundingClientRect(); conversationMenu(Object.assign(pressEvent(rect.left + 24, rect.bottom), { preventDefault: () => event.preventDefault() }), target); } }}>
-      <span className="conversation-icon" title={compact ? target.name : undefined}>{roomIcon(target, 44)}{compact && status?.hasUnread && <i className="compact-dot" aria-hidden="true" />}</span><span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span>{target.pinned && <Pin className="conversation-pin" size={11} aria-label="已置顶" />}{target.muted && <BellOff className="conversation-pin" size={11} aria-label="免打扰" />}<time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
-        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}{typingLabel(target) ? <span className="typing-text">{typingLabel(target)}</span> : <PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>}{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
+      <span className="conversation-icon" title={compact ? target.name : undefined}>{roomIcon(target, 44)}{compact && showUnread && <i className="compact-dot" aria-hidden="true" />}</span><span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span>{target.pinned && <Pin className="conversation-pin" size={11} aria-label="已置顶" />}{target.muted && <BellOff className="conversation-pin" size={11} aria-label="免打扰" />}<time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
+        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}{typingLabel(target) ? <span className="typing-text">{typingLabel(target)}</span> : <PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>}{showUnread && <span className="unread-badge" aria-label={label} title={label}>{status?.hasUnread ? status.exact ? status.count > 99 ? '99+' : status.count : '新' : ''}</span>}</span>
       </span>
     </button>;
   };
@@ -379,7 +389,7 @@ export default function App() {
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表">{resizer}
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions"><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       <nav className="conversation-scroll" aria-label="会话">
         {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{filtered.filter(room => room.pinned).map(roomButton)}</>}
