@@ -5,7 +5,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -71,7 +71,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   mutedRooms.current = new Set(conversations.filter(room => room.muted).map(room => room.id));
@@ -217,6 +217,14 @@ export default function App() {
     notify(`已转发到「${target.name}」`);
     await refresh();
   }
+  async function votePoll(message, options) {
+    try { applyPoll(await api('polls/vote', { messageId: message.id, options })); }
+    catch (error) { notify(error.message); }
+  }
+  async function closePoll(message) {
+    try { applyPoll(await api('polls/close', { messageId: message.id })); notify('投票已结束'); }
+    catch (error) { notify(error.message); }
+  }
   async function toggleSaved(message, value) {
     try { await api('saved', { messageId: message.id, saved: value }); setSaved((await api('saved')).items); notify(value ? '已收藏' : '已取消收藏'); }
     catch (error) { notify(error.message); }
@@ -262,7 +270,7 @@ export default function App() {
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
     const canReply = !message.recalledAt;
     const canReact = canReply && Boolean(state.reactions?.length);
-    const canEdit = canRecall;
+    const canEdit = canRecall && !message.poll;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
     const canPin = pins.roomId === message.roomId && pins.canPin && !message.recalledAt;
@@ -409,7 +417,7 @@ export default function App() {
         {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={messageMenu} message={message}
           onReply={target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id }); }} nameOf={id => userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined)}
           onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
-          reactionOptions={state.reactions || []} onReact={toggleReaction} picking={reactingTo === message.id} onPick={setReactingTo}
+          reactionOptions={state.reactions || []} onReact={toggleReaction} onVote={votePoll} onClosePoll={closePoll} picking={reactingTo === message.id} onPick={setReactingTo}
           selecting={Boolean(selection)} selected={selection?.includes(message.id)} onToggleSelect={target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id])} user={userMap[message.senderId] || (message.bot ? { id: message.senderId, name: message.bot, avatar: 'bot' } : undefined)} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} last={!(currentMessages[index + 1] && sameGroup(message, currentMessages[index + 1]))} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
@@ -419,7 +427,7 @@ export default function App() {
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
       </div> : <Composer room={room} connected={connected && !loggingOut} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
-        onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
+        onCreatePoll={() => setModal('poll')} onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
         onEditLast={() => { if (lastOwn) { setReplying(null); setEditing({ roomId: lastOwn.roomId, id: lastOwn.id }); } }}
         reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : panelView === 'files' ? '图片与文件' : '会话成员'}>{panelView === 'files'
@@ -456,6 +464,7 @@ export default function App() {
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
     {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
+    {modal === 'poll' && room && <PollDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; receive(message); }} />}
     {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
       {!saved.length ? <p className="inline-note">还没有收藏。在消息上点右键，选「收藏」。</p> : <div className="history-results saved-list">{saved.map(item => {
         const target = rooms.find(candidate => candidate.id === item.message.roomId);

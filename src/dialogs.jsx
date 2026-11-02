@@ -257,6 +257,31 @@ export function AuditDialog({ onClose }) {
   </Modal>;
 }
 
+// 发起投票：问题加 2–10 个选项，可选多选。
+export function PollDialog({ room, onClose, onCreated }) {
+  const [question, setQuestion] = useState('');
+  const [options, setOptions] = useState(['', '']);
+  const [multiple, setMultiple] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const filled = options.map(option => option.trim()).filter(Boolean);
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { const { message } = await api('polls', { roomId: room.id, question, options: filled, multiple }); onCreated(message); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title="发起投票" subtitle={`在「${room.name}」里发起，投票结果所有人可见。`} onClose={() => !busy && onClose()}><form onSubmit={submit} className="poll-form">
+    <input autoFocus aria-label="投票问题" placeholder="问题，例如：中午吃什么？" value={question} maxLength={200} onChange={event => setQuestion(event.target.value)} />
+    {options.map((option, index) => <div className="poll-form-option" key={index}><input aria-label={`选项 ${index + 1}`} placeholder={`选项 ${index + 1}`} value={option} maxLength={100}
+      onChange={event => setOptions(previous => previous.map((item, position) => position === index ? event.target.value : item))} />
+      {options.length > 2 && <button type="button" className="text-button" onClick={() => setOptions(previous => previous.filter((_, position) => position !== index))}>删除</button>}</div>)}
+    {options.length < 10 && <button type="button" className="text-button" onClick={() => setOptions(previous => [...previous, ''])}>添加选项</button>}
+    <label className="toggle-row"><input type="checkbox" checked={multiple} onChange={event => setMultiple(event.target.checked)} />允许多选</label>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !question.trim() || filled.length < 2}>{busy ? '正在发起…' : '发起投票'}</button></div>
+  </form></Modal>;
+}
+
 export function RecallDialog({ message, onClose, onRecalled }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

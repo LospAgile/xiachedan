@@ -78,6 +78,9 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
   }, []);
+  const applyPoll = useCallback(({ roomId, messageId, poll }) => {
+    setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, poll } : message) } : previous);
+  }, []);
   // 编辑后的消息只替换正文等字段，不当作新消息提醒；侧栏预览也跟着更新。
   const applyEdit = useCallback(message => {
     setMessages(previous => previous[message.roomId] ? { ...previous, [message.roomId]: merge(previous[message.roomId], [message], historyRef.current) } : previous);
@@ -177,13 +180,14 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
+        if (data.type === 'message-poll') applyPoll(data);
       };
       socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
       socket.onerror = () => socket.close();
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -224,5 +228,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll };
 }

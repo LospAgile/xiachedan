@@ -98,7 +98,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const botOf = id => stmt('SELECT name FROM message_bots WHERE message_id=?').get(id)?.name || null;
   const editedAt = id => stmt('SELECT edited_at FROM message_edits WHERE message_id=?').get(id)?.edited_at || null;
   const removedBy = id => stmt('SELECT actor_id FROM message_removals WHERE message_id=?').get(id)?.actor_id || null;
-  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const pollOf = id => {
+    const poll = stmt('SELECT * FROM polls WHERE message_id=?').get(id);
+    if (!poll) return null;
+    const votes = stmt('SELECT user_id, option_index FROM poll_votes WHERE message_id=? ORDER BY voted_at, rowid').all(id);
+    return { multiple: Boolean(poll.multiple), closedAt: poll.closed_at, options: JSON.parse(poll.options).map((text, index) => ({ text, voters: votes.filter(vote => vote.option_index === index).map(vote => vote.user_id) })) };
+  };
+  const serializeMessage = row => row ? { ...baseMessage(row), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -400,6 +406,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       try {
         if (removedBy) stmt('INSERT OR IGNORE INTO message_removals VALUES (?,?,?)').run(id, removedBy.id, Date.now());
         stmt('DELETE FROM room_pins WHERE message_id=?').run(id);
+        stmt('DELETE FROM polls WHERE message_id=?').run(id);
+        stmt('DELETE FROM poll_votes WHERE message_id=?').run(id);
         for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
@@ -455,6 +463,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
+    if (pollOf(id)) throw fail('投票不能编辑');
     if (recalledAt(id)) throw fail('消息已撤回');
     const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
@@ -485,7 +494,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -729,6 +738,59 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 投票：问题 1–200 字，选项 2–10 个、每个 1–100 字且不重复；可以单选或多选。
+  app.post('/api/polls', (req, res) => {
+    rateLimit(req, 'polls', 10);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const question = textValue(req.body?.question, 200);
+    const options = Array.isArray(req.body?.options) ? req.body.options.map(option => textValue(option, 100)).filter(Boolean) : [];
+    if (!question) throw fail('请输入投票问题');
+    if (options.length < 2 || options.length > 10 || new Set(options).size !== options.length) throw fail('请填写 2–10 个不重复的选项');
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, question, '[]', `poll:${id}`, Date.now());
+      stmt('INSERT INTO polls VALUES (?,?,?,?)').run(id, JSON.stringify(options), req.body.multiple === true ? 1 : 0, null);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, room.id);
+    res.status(201).json({ message });
+  });
+  const requirePoll = (req, id) => {
+    const row = typeof id === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(id);
+    const poll = row && stmt('SELECT * FROM polls WHERE message_id=?').get(row.id);
+    if (!poll || row.seq <= clearedThroughSeq()) throw fail('投票不存在', 404);
+    requireRoom(row.room_id, req.user.id);
+    return { row, poll };
+  };
+  const pollChanged = row => {
+    const event = { roomId: row.room_id, messageId: row.id, poll: pollOf(row.id) };
+    broadcast({ type: 'message-poll', ...event }, row.room_id);
+    return event;
+  };
+  // 投票或改票：提交自己选中的全部选项，空数组表示撤回自己的投票。
+  app.post('/api/polls/vote', (req, res) => {
+    rateLimit(req, 'poll-vote', 60);
+    const { row, poll } = requirePoll(req, req.body?.messageId);
+    if (poll.closed_at) throw fail('投票已结束');
+    const count = JSON.parse(poll.options).length;
+    const choices = Array.isArray(req.body?.options) ? [...new Set(req.body.options)] : null;
+    if (!choices || choices.some(index => !Number.isInteger(index) || index < 0 || index >= count) || (!poll.multiple && choices.length > 1)) throw fail('选项无效');
+    db.exec('BEGIN');
+    try {
+      stmt('DELETE FROM poll_votes WHERE message_id=? AND user_id=?').run(row.id, req.user.id);
+      for (const index of choices) stmt('INSERT INTO poll_votes VALUES (?,?,?,?)').run(row.id, req.user.id, index, Date.now());
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    res.json(pollChanged(row));
+  });
+  app.post('/api/polls/close', (req, res) => {
+    const { row, poll } = requirePoll(req, req.body?.messageId);
+    if (row.sender_id !== req.user.id) throw fail('只有发起人可以结束投票', 403);
+    if (!poll.closed_at) stmt('UPDATE polls SET closed_at=? WHERE message_id=?').run(Date.now(), row.id);
+    res.json(pollChanged(row));
   });
   // 收藏夹：最近收藏的在前，最多列 200 条；撤回、清空或已无权访问的消息不列出。
   app.get('/api/saved', (req, res) => {

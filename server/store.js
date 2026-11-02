@@ -66,6 +66,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 投票：投票本身是一条消息（正文是问题），选项与投票人另存；投票公开，大家能看到谁投了什么。
+    CREATE TABLE IF NOT EXISTS polls (message_id TEXT PRIMARY KEY, options TEXT NOT NULL, multiple INTEGER NOT NULL DEFAULT 0, closed_at INTEGER);
+    CREATE TABLE IF NOT EXISTS poll_votes (message_id TEXT NOT NULL, user_id TEXT NOT NULL, option_index INTEGER NOT NULL, voted_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, option_index));
     -- 收藏：每人自己的收藏夹，只记消息标识；消息撤回或自己失去访问权后不再列出。
     CREATE TABLE IF NOT EXISTS saved_messages (user_id TEXT NOT NULL, message_id TEXT NOT NULL, saved_at INTEGER NOT NULL, PRIMARY KEY (user_id, message_id));
     -- 会话内置顶的消息：群主、空间管理者或私聊双方可以置顶，每个会话最多 20 条。

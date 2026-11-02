@@ -7,7 +7,7 @@ import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast }) {
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -210,9 +210,10 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     <div className={`composer-row ${recording ? 'recording' : ''}`}>
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - 2 * 36, label: '添加附件', items: [
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (onCreatePoll ? 3 : 2) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
+        ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
     {emojiOpen && <EmojiPicker onPick={insertText} onClose={() => setEmojiOpen(false)} />}

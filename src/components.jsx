@@ -59,6 +59,24 @@ function FileCard({ file }) {
 }
 
 const clock = seconds => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+// 投票卡片：选中即投，多选可勾多个；结果对所有人公开，悬停能看到投票人。
+function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
+  const { poll } = message;
+  const mine = poll.options.map((option, index) => option.voters.includes(viewerId) ? index : -1).filter(index => index >= 0);
+  const voters = new Set(poll.options.flatMap(option => option.voters));
+  const top = Math.max(1, ...poll.options.map(option => option.voters.length));
+  const toggle = index => onVote?.(message, poll.multiple ? (mine.includes(index) ? mine.filter(item => item !== index) : [...mine, index]) : (mine.includes(index) ? [] : [index]));
+  return <div className="poll-card">
+    <div className="poll-question">{message.text}</div>
+    <small className="poll-kind">{poll.closedAt ? '投票已结束' : poll.multiple ? '多选投票' : '单选投票'}</small>
+    {poll.options.map((option, index) => <button type="button" key={index} className={`poll-option ${mine.includes(index) ? 'chosen' : ''}`} disabled={Boolean(poll.closedAt)} aria-pressed={mine.includes(index)}
+      title={option.voters.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、') || '还没有人选'} onClick={() => toggle(index)}>
+      <i style={{ transform: `scaleX(${option.voters.length / top})` }} aria-hidden="true" /><span>{mine.includes(index) && <Check size={13} />}{option.text}</span><b>{option.voters.length}</b>
+    </button>)}
+    <div className="poll-footer"><span>{voters.size} 人参与</span>{onClosePoll && !poll.closedAt && <button type="button" className="text-button" onClick={() => onClosePoll(message)}>结束投票</button>}</div>
+  </div>;
+}
+
 // 语音条：播放 / 暂停、进度和时长。
 function VoiceNote({ file }) {
   const audio = useRef();
@@ -141,7 +159,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -195,8 +213,9 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
-    {message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
-    {message.text && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
+    {message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} /><div className="bubble-meta-row">{meta}</div></>
+      : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
+    {message.text && !message.poll && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
     {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
   </>;
