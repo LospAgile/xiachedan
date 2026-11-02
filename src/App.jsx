@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -31,6 +31,10 @@ export default function App() {
   const [pinIndex, setPinIndex] = useState(0);
   // 自己收藏的消息：菜单据此显示「收藏 / 取消收藏」，收藏夹弹窗列出全部。
   const [saved, setSaved] = useState([]);
+  // 当前会话里自己还没发出的定时消息、正在设置提醒的消息。
+  const [scheduled, setScheduled] = useState({ roomId: null, items: [] });
+  const [scheduleText, setScheduleText] = useState(null);
+  const [reminding, setReminding] = useState(null);
   const [reactingTo, setReactingTo] = useState(null);
   const [selection, setSelection] = useState(null);
   const [forwarding, setForwarding] = useState(null);
@@ -158,6 +162,9 @@ export default function App() {
     api('saved').then(result => { if (alive) setSaved(result.items); }).catch(() => {});
     return () => { alive = false; };
   }, [state?.me.id, savedVersion, historyVersion]);
+  const lastScheduledSeq = currentMessages.findLast(message => message.clientId?.startsWith('scheduled:'))?.seq;
+  const loadScheduled = useCallback(roomId => api(`scheduled?roomId=${encodeURIComponent(roomId)}`).then(result => setScheduled({ roomId, items: result.items })).catch(() => {}), []);
+  useEffect(() => { if (state?.me.id && selected) loadScheduled(selected); }, [selected, state?.me.id, lastScheduledSeq, loadScheduled]);
   useEffect(() => {
     if (!state?.me.id || !selected) return;
     let alive = true;
@@ -285,6 +292,7 @@ export default function App() {
       if (action === 'remove') setRemovingMessage(latest);
       if (action === 'pin' || action === 'unpin') togglePin(latest, action === 'pin');
       if (action === 'save' || action === 'unsave') toggleSaved(latest, action === 'save');
+      if (action === 'remind') setReminding(latest);
       if (action === 'reply') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'react') setReactingTo(latest.id);
       if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
@@ -295,12 +303,13 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canReply, canReact, canForward: canReply, canCopy, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
+      ...(canReply ? [{ id: 'remind', label: '提醒我…', action: () => act('remind') }] : []),
       ...(canReply ? [{ id: isSaved ? 'unsave' : 'save', label: isSaved ? '取消收藏' : '收藏', action: () => act(isSaved ? 'unsave' : 'save') }] : []),
       ...(canPin ? [{ id: pinned ? 'unpin' : 'pin', label: pinned ? '取消置顶消息' : '置顶消息', action: () => act(pinned ? 'unpin' : 'pin') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
@@ -427,7 +436,8 @@ export default function App() {
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
       </div> : <Composer room={room} connected={connected && !loggingOut} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
-        onCreatePoll={() => setModal('poll')} onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
+        notice={scheduled.roomId === room.id && scheduled.items.length > 0 && <button type="button" className="scheduled-bar glass" onClick={() => setModal('scheduled')}><Clock size={14} />{scheduled.items.length} 条定时消息待发送 · 最近 {new Date(scheduled.items[0].sendAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</button>}
+        onCreatePoll={() => setModal('poll')} onSchedule={text => setScheduleText(text)} onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
         onEditLast={() => { if (lastOwn) { setReplying(null); setEditing({ roomId: lastOwn.roomId, id: lastOwn.id }); } }}
         reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : panelView === 'files' ? '图片与文件' : '会话成员'}>{panelView === 'files'
@@ -464,6 +474,9 @@ export default function App() {
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
     {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
+    {scheduleText !== null && room && <ScheduleDialog room={room} initialText={scheduleText} onClose={() => setScheduleText(null)} onScheduled={when => { notify(`将在 ${when} 发送`); loadScheduled(room.id); }} />}
+    {modal === 'scheduled' && <ScheduledListDialog items={scheduled.items} onClose={() => setModal(null)} onCancel={async item => { try { await api('scheduled/cancel', { id: item.id }); await loadScheduled(item.roomId); notify('已取消发送'); } catch (error) { notify(error.message); } }} />}
+    {reminding && <ReminderDialog message={reminding} notify={notify} onClose={() => setReminding(null)} />}
     {modal === 'poll' && room && <PollDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; receive(message); }} />}
     {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
       {!saved.length ? <p className="inline-note">还没有收藏。在消息上点右键，选「收藏」。</p> : <div className="history-results saved-list">{saved.map(item => {

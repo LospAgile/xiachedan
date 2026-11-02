@@ -44,6 +44,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   mode = process.env.CHAT_MODE || (process.env.NODE_ENV === 'production' ? 'cloud' : 'local'),
   serveWeb = process.env.CHAT_SERVE_WEB === 'true' || (mode === 'local' && process.env.CHAT_SERVE_WEB !== 'false'),
   previewFetcher = fetchPreview,
+  scheduleInterval = 15000,
+  scheduleMinLead = 30000,
 } = {}) {
   if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
   const cloud = mode === 'cloud';
@@ -739,6 +741,62 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
+  // 定时消息：最早 1 分钟后、最晚 30 天内；每人最多 50 条待发送。
+  const timeValue = value => { const time = Number(value); if (!Number.isSafeInteger(time) || time < Date.now() + scheduleMinLead || time > Date.now() + 30 * 86400000) throw fail('时间需要在 1 分钟以后、30 天以内'); return time; };
+  const scheduledView = row => ({ id: row.id, roomId: row.room_id, text: row.text, sendAt: row.send_at, createdAt: row.created_at });
+  app.get('/api/scheduled', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    res.json({ items: stmt('SELECT * FROM scheduled_messages WHERE room_id=? AND sender_id=? ORDER BY send_at').all(room.id, req.user.id).map(scheduledView) });
+  });
+  app.post('/api/scheduled', (req, res) => {
+    rateLimit(req, 'scheduled', 20);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text || text.length > 10000) throw fail('请输入 1–10000 个字的消息');
+    const sendAt = timeValue(req.body.sendAt);
+    if (stmt('SELECT COUNT(*) AS n FROM scheduled_messages WHERE sender_id=?').get(req.user.id).n >= 50) throw fail('最多同时保留 50 条定时消息');
+    const id = randomUUID();
+    stmt('INSERT INTO scheduled_messages VALUES (?,?,?,?,?,?)').run(id, room.id, req.user.id, text, sendAt, Date.now());
+    res.status(201).json({ item: scheduledView(stmt('SELECT * FROM scheduled_messages WHERE id=?').get(id)) });
+  });
+  app.post('/api/scheduled/cancel', (req, res) => {
+    const removed = stmt('DELETE FROM scheduled_messages WHERE id=? AND sender_id=?').run(String(req.body?.id || ''), req.user.id).changes;
+    if (!removed) throw fail('定时消息不存在或已发送', 404);
+    res.json({ ok: true });
+  });
+  // 提醒我：到点通知自己；不在线就等下次连上时补发。
+  app.post('/api/reminders', (req, res) => {
+    rateLimit(req, 'reminders', 30);
+    const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
+    if (!message || message.seq <= clearedThroughSeq() || recalledAt(message.id)) throw fail('消息不存在或已撤回', 404);
+    requireRoom(message.room_id, req.user.id);
+    const remindAt = timeValue(req.body.remindAt);
+    if (stmt('SELECT COUNT(*) AS n FROM reminders WHERE user_id=?').get(req.user.id).n >= 100) throw fail('最多同时保留 100 个提醒');
+    const id = randomUUID();
+    stmt('INSERT INTO reminders VALUES (?,?,?,?,?)').run(id, req.user.id, message.id, remindAt, Date.now());
+    res.status(201).json({ id, remindAt });
+  });
+  // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
+  const runSchedules = () => {
+    const now = Date.now();
+    for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
+      stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
+      const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
+      if (!canAccess(room, row.sender_id)) continue;
+      const id = randomUUID();
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, row.sender_id, row.text, '[]', `scheduled:${row.id}`, Date.now());
+      broadcast({ type: 'message', message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } }, room.id);
+    }
+    const online = onlineIds();
+    for (const row of stmt('SELECT * FROM reminders WHERE remind_at<=?').all(now)) {
+      const message = stmt('SELECT * FROM messages WHERE id=?').get(row.message_id);
+      const room = message && stmt('SELECT * FROM rooms WHERE id=?').get(message.room_id);
+      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); continue; }
+      if (!online.has(row.user_id)) continue;
+      deliver({ type: 'reminder', message: serializeMessage(message) }, socket => socket.userId === row.user_id);
+      stmt('DELETE FROM reminders WHERE id=?').run(row.id);
+    }
+  };
   // 投票：问题 1–200 字，选项 2–10 个、每个 1–100 字且不重复；可以单选或多选。
   app.post('/api/polls', (req, res) => {
     rateLimit(req, 'polls', 10);
@@ -1056,6 +1114,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       broadcast({ type: 'users', users: users() });
     });
   });
+  const scheduler = setInterval(runSchedules, scheduleInterval);
+  scheduler.unref();
   const heartbeat = setInterval(() => {
     for (const socket of sockets) {
       if (cloud && !auth.validSocket(socket)) socket.close(4001, 'session-expired');
@@ -1071,12 +1131,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }
-  catch (error) { clearInterval(heartbeat); wss.close(); db.close(); throw error; }
+  catch (error) { clearInterval(heartbeat); clearInterval(scheduler); wss.close(); db.close(); throw error; }
   const address = `http://127.0.0.1:${server.address().port}`;
   return { server, address, setupUrl: `${address}/#setup=${setupKey}`, close: async () => {
     if (closing) return;
     closing = true;
     clearInterval(heartbeat);
+    clearInterval(scheduler);
     for (const socket of sockets) socket.terminate();
     wss.close();
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });

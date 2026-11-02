@@ -181,6 +181,12 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
         if (data.type === 'message-poll') applyPoll(data);
+        if (data.type === 'reminder') {
+          const current = stateRef.current, sender = current?.users.find(user => user.id === data.message.senderId);
+          notify(`提醒：${privacyRef.current ? '你设置的消息提醒到了' : previewText(data.message).slice(0, 60)}`);
+          window.desktop?.message?.({ id: `reminder-${data.message.id}`, roomId: data.message.roomId, privateMode: privacyRef.current,
+            title: privacyRef.current ? '虾扯蛋 · 提醒' : `提醒 · ${sender?.name || data.message.bot || '消息'}`, body: privacyRef.current ? '****' : previewText(data.message).slice(0, 240) }).catch(() => {});
+        }
       };
       socket.onclose = event => { if (cancelled || logoutPending.current) return; if (event.code === 4003 || event.code === 4001) { location.reload(); return; } setConnected(false); reconnect.current = setTimeout(connect, delay); delay = Math.min(delay * 1.7, 10000); };
       socket.onerror = () => socket.close();

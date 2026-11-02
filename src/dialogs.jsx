@@ -282,6 +282,60 @@ export function PollDialog({ room, onClose, onCreated }) {
   </form></Modal>;
 }
 
+// 常用时间：20 分钟后、1 小时后、今晚 20:00、明早 9:00，也可以自己选。
+function TimeChoices({ value, onChange }) {
+  const at = (days, hours, minutes = 0) => { const date = new Date(); date.setDate(date.getDate() + days); date.setHours(hours, minutes, 0, 0); return date.getTime(); };
+  const choices = [['20 分钟后', Date.now() + 20 * 60000], ['1 小时后', Date.now() + 3600000],
+    ...(new Date().getHours() < 19 ? [['今晚 20:00', at(0, 20)]] : []), ['明早 9:00', at(1, 9)]];
+  const local = time => { const date = new Date(time - new Date(time).getTimezoneOffset() * 60000); return date.toISOString().slice(0, 16); };
+  return <div className="time-choices">
+    <div className="time-chips">{choices.map(([label, time]) => <button type="button" key={label} className={`secondary-button ${Math.abs(value - time) < 60000 ? 'selected' : ''}`} onClick={() => onChange(time)}>{label}</button>)}</div>
+    <input type="datetime-local" aria-label="选择时间" value={value ? local(value) : ''} onChange={event => onChange(new Date(event.target.value).getTime())} />
+  </div>;
+}
+const whenText = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+export function ScheduleDialog({ room, initialText = '', onClose, onScheduled }) {
+  const [text, setText] = useState(initialText);
+  const [time, setTime] = useState(Date.now() + 3600000);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await api('scheduled', { roomId: room.id, text, sendAt: time }); onScheduled(whenText(time)); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title="定时发送" subtitle={`到点后以你的名义发到「${room.name}」。`} onClose={() => !busy && onClose()}><form onSubmit={submit} className="poll-form">
+    <textarea autoFocus className="announcement-input" aria-label="消息内容" rows={4} maxLength={10000} value={text} onChange={event => setText(event.target.value)} placeholder="要发送的内容" />
+    <TimeChoices value={time} onChange={setTime} />
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !text.trim()}>{busy ? '正在保存…' : `${whenText(time)} 发送`}</button></div>
+  </form></Modal>;
+}
+
+export function ScheduledListDialog({ items, onCancel, onClose }) {
+  return <Modal title="定时消息" subtitle="还没发出的消息，只有你自己看得到。" onClose={onClose}>
+    <ul className="device-list">{items.map(item => <li key={item.id}><span><b>{whenText(item.sendAt)}</b><small className="scheduled-text">{item.text}</small></span>
+      <button type="button" className="text-button danger-text" onClick={() => onCancel(item)}>取消发送</button></li>)}</ul>
+  </Modal>;
+}
+
+export function ReminderDialog({ message, onClose, notify }) {
+  const [time, setTime] = useState(Date.now() + 3600000);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit() {
+    setBusy(true); setError('');
+    try { await api('reminders', { messageId: message.id, remindAt: time }); notify(`将在 ${whenText(time)} 提醒你`); onClose(); }
+    catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title="提醒我" subtitle="到时间会在这里和系统通知里提醒你，只有你自己收到。" onClose={() => !busy && onClose()}>
+    <TimeChoices value={time} onChange={setTime} />
+    {error && <p className="form-error" role="alert">{error}</p>}
+    <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy} onClick={submit}>{busy ? '正在保存…' : '设置提醒'}</button></div>
+  </Modal>;
+}
+
 export function RecallDialog({ message, onClose, onRecalled }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

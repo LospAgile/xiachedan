@@ -7,7 +7,7 @@ import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll }) {
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -199,6 +199,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
         {user.id === '*' ? <span className="mention-everyone"><Users size={13} /></span> : <Avatar user={user} size={22} />}<span>{user.name}</span>{user.id === '*' && <small>提醒会话里的每个人</small>}
       </button>)}
     </div>}
+    {notice}
     {editing && <div className="reply-bar editing-bar" role="status"><span className="reply-copy"><b>编辑消息</b><PrivatePreview privateMode={privateMode}>{previewText(editing)}</PrivatePreview></span><IconButton icon={X} label="取消编辑" size={14} onClick={onCancelEdit} /></div>}
     {reply && !editing && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
     {draft.files.length > 0 && !editing && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
@@ -210,10 +211,11 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     <div className={`composer-row ${recording ? 'recording' : ''}`}>
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (onCreatePoll ? 3 : 2) * 36, label: '添加附件', items: [
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (2 + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
         ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
+        ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
     {emojiOpen && <EmojiPicker onPick={insertText} onClose={() => setEmojiOpen(false)} />}

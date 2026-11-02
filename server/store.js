@@ -66,6 +66,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS history_state (id INTEGER PRIMARY KEY, cleared_through_seq INTEGER NOT NULL);
     INSERT OR IGNORE INTO history_state VALUES (1,0);
     CREATE INDEX IF NOT EXISTS messages_room_seq ON messages(room_id, seq);
+    -- 定时消息：到点由服务器以发送人的身份发出（只支持文字，不带 @提醒）；提醒：到点只通知设置的人自己。
+    CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, send_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS reminders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, message_id TEXT NOT NULL, remind_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
     -- 投票：投票本身是一条消息（正文是问题），选项与投票人另存；投票公开，大家能看到谁投了什么。
     CREATE TABLE IF NOT EXISTS polls (message_id TEXT PRIMARY KEY, options TEXT NOT NULL, multiple INTEGER NOT NULL DEFAULT 0, closed_at INTEGER);
     CREATE TABLE IF NOT EXISTS poll_votes (message_id TEXT NOT NULL, user_id TEXT NOT NULL, option_index INTEGER NOT NULL, voted_at INTEGER NOT NULL, PRIMARY KEY (message_id, user_id, option_index));
