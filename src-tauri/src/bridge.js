@@ -50,6 +50,8 @@
     },
     home: () => invoke('desktop_home'),
     copy: text => invoke('desktop_copy', { text }),
+    // 返回截图 PNG 的 ArrayBuffer；取消或由系统工具放进剪贴板时为空。
+    screenshot: () => invoke('desktop_screenshot'),
     ready: privateMode => invoke('desktop_ready', { privateMode: privateMode === true }),
     getState: () => invoke('desktop_state'),
     settings: value => invoke('desktop_settings', { value }),

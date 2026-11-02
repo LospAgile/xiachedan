@@ -28,6 +28,7 @@
     "allow-desktop-zoom",
     "allow-desktop-update-check",
     "allow-desktop-update-install",
-    "allow-desktop-identity"
+    "allow-desktop-identity",
+    "allow-desktop-screenshot"
   ]
 }

@@ -335,6 +335,31 @@ fn desktop_identity(webview: Webview, desktop: Shared<'_>, space_id: String, mig
   Ok(json!({ "device": device, "legacy": legacy }))
 }
 
+// 截图：macOS 调用系统的 screencapture 让用户框选，返回 PNG 原始字节，取消时返回空；
+// Windows 打开系统截图工具，截好的图在剪贴板里，由用户粘贴，这里返回空。
+#[tauri::command]
+async fn desktop_screenshot(app: AppHandle, webview: Webview, desktop: Shared<'_>) -> Result<tauri::ipc::Response, String> {
+  require_trusted(&webview, &desktop)?;
+  #[cfg(target_os = "macos")]
+  {
+    let _ = &app;
+    let path = std::env::temp_dir().join(format!("linliao-screenshot-{}.png", uuid::Uuid::new_v4().simple()));
+    let target = path.clone();
+    let status = tauri::async_runtime::spawn_blocking(move || std::process::Command::new("/usr/sbin/screencapture").args(["-i", "-x", "-t", "png"]).arg(&target).status())
+      .await.map_err(|error| error.to_string())?.map_err(|error| format!("无法启动截图：{error}"))?;
+    let bytes = if status.success() { std::fs::read(&path).unwrap_or_default() } else { Vec::new() };
+    let _ = std::fs::remove_file(&path);
+    return Ok(tauri::ipc::Response::new(bytes));
+  }
+  #[cfg(windows)]
+  {
+    app.opener().open_url("ms-screenclip:", None::<&str>).map_err(|error| format!("无法打开系统截图工具：{error}"))?;
+    return Ok(tauri::ipc::Response::new(Vec::new()));
+  }
+  #[allow(unreachable_code)]
+  { let _ = app; Err("当前系统不支持截图".into()) }
+}
+
 #[tauri::command]
 fn desktop_copy(app: AppHandle, webview: Webview, desktop: Shared<'_>, text: String) -> Result<bool, String> {
   require_trusted(&webview, &desktop)?;
@@ -620,7 +645,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity, desktop_screenshot
     ])
     .setup(|app| {
       let handle = app.handle().clone();

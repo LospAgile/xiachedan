@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-screenshot"
+description = "Enables the desktop_screenshot command without any pre-configured scope."
+commands.allow = ["desktop_screenshot"]
+
+[[permission]]
+identifier = "deny-desktop-screenshot"
+description = "Denies the desktop_screenshot command without any pre-configured scope."
+commands.deny = ["desktop_screenshot"]

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText } from 'lucide-react';
+import { Image as ImageIcon, Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Scissors } from 'lucide-react';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview } from './components';
 import { previewText } from './history';
@@ -57,6 +57,30 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     update(roomId, state => ({ ...state, files: [...state.files, ...items] }));
     for (const item of items) uploadItem(item, roomId);
   }
+  // 桌面端截图：macOS 框选后直接加入待发送；Windows 打开系统截图工具，截好后由用户粘贴。
+  const canScreenshot = Boolean(window.desktop?.screenshot);
+  const shortcut = window.desktop?.platform === 'macos' ? '⌘⇧A' : 'Ctrl+Shift+A';
+  async function screenshot() {
+    if (!connected) return notify('连接恢复后再发送截图');
+    try {
+      const buffer = await window.desktop.screenshot();
+      if (buffer?.byteLength) {
+        const stamp = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/[/:]/g, '-');
+        addFiles([new File([buffer], `截图 ${stamp}.png`, { type: 'image/png' })]);
+        textarea.current?.focus({ preventScroll: true });
+      } else if (window.desktop.platform === 'windows') notify('截好后按 Ctrl+V 粘贴到输入框');
+    } catch (error) { notify(error.message); }
+  }
+  const screenshotRef = useRef(screenshot);
+  screenshotRef.current = screenshot;
+  useEffect(() => {
+    if (!canScreenshot) return;
+    const onKey = event => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); screenshotRef.current(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canScreenshot]);
   function removeFile(item) {
     URL.revokeObjectURL(item.url);
     update(room.id, state => ({ ...state, files: state.files.filter(file => file.id !== item.id) }));
@@ -113,6 +137,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
       <IconButton icon={ImageIcon} label="发送图片（也可拖入或粘贴）" className="composer-tool" disabled={sending || !connected} onClick={() => input.current.click()} />
       <IconButton icon={Film} label="发送视频（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => videoInput.current.click()} />
       <IconButton icon={Paperclip} label="发送文件（单个文件最大 100 MB）" className="composer-tool" disabled={sending || !connected} onClick={() => fileInput.current.click()} />
+      {canScreenshot && <IconButton icon={Scissors} label={`截图（${shortcut}）`} className="composer-tool" disabled={sending || !connected} onClick={screenshot} />}
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {
