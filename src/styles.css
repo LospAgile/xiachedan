@@ -424,7 +424,7 @@ button.message-read-status.is-read { color: var(--text-1); }
 .queued-file > div small { font-size: 10px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .queued-file.failed small { color: var(--danger-text); }
 .queued-file .icon-button { width: 24px; height: 24px; }
-.composer-row { display: flex; align-items: flex-end; gap: 8px; }
+.composer-row { position: relative; display: flex; align-items: flex-end; gap: 8px; }
 .round-button { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 46px; height: 46px; border-radius: 50%; }
 .attach-button { color: var(--text-2); }
 .composer { flex: 1; min-width: 0; position: relative; display: flex; align-items: flex-end; gap: 2px; min-height: 46px; padding: 5px 8px; border-radius: 23px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-1); transition: box-shadow 160ms var(--ease-out); }
@@ -727,3 +727,13 @@ button.message-read-status.is-read { color: var(--text-1); }
 .device-list li span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .device-list small { color: var(--text-2); font-size: 11px; }
 .device-list .me-tag { margin-left: 6px; }
+
+/* 表情面板 */
+.emoji-button { flex: none; align-self: flex-end; margin: 0 2px 2px 0; color: var(--text-2); }
+.emoji-button.selected { color: var(--accent-bright); }
+.emoji-picker { position: absolute; right: 52px; bottom: calc(100% + 10px); z-index: 30; width: 336px; max-height: 320px; overflow-y: auto; padding: 8px 10px 10px; border-radius: 16px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); animation: menu-in 150ms var(--ease-out); }
+.emoji-picker h4 { margin: 6px 2px 4px; color: var(--text-2); font-size: 11px; font-weight: 600; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.emoji-grid button { height: 36px; border-radius: 8px; font-size: 21px; line-height: 1; }
+@media (hover: hover) and (pointer: fine) { .emoji-grid button:hover { background: var(--fill-1); } }
+@media (max-width: 420px) { .emoji-picker { width: calc(100vw - 40px); } }

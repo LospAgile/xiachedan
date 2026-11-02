@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile } from 'lucide-react';
+import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
@@ -13,6 +14,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
   const [editText, setEditText] = useState('');
   const input = useRef();
@@ -87,6 +89,15 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     requestAnimationFrame(() => node.setSelectionRange(start + mark.length, end + mark.length));
     return true;
   }
+  // 在光标处插入表情，编辑和普通输入都适用。
+  function insertText(value) {
+    const node = textarea.current;
+    const current = editing ? editText : draft.text;
+    const start = node?.selectionStart ?? current.length, end = node?.selectionEnd ?? current.length;
+    const next = current.slice(0, start) + value + current.slice(end);
+    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
+    requestAnimationFrame(() => { node?.focus({ preventScroll: true }); node?.setSelectionRange(start + value.length, start + value.length); });
+  }
   async function saveEdit() {
     const text = editText.trim();
     if (sending || !connected) return;
@@ -158,6 +169,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
+    {emojiOpen && <EmojiPicker onPick={insertText} onClose={() => setEmojiOpen(false)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
@@ -182,6 +194,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
           if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
         }} />
+      <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
     <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 支持 **粗体** `代码` 等简单格式'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
