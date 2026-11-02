@@ -77,8 +77,8 @@ export default function App() {
     observer.observe(content);
     return () => observer.disconnect();
   }, [state?.me.id, state?.rooms.length]);
-  // 免打扰的会话不计入菜单栏与托盘的未读数。
-  const unreadRooms = JSON.stringify(state?.rooms.filter(room => !room.muted && unread[room.id]?.hasUnread).map(room => room.id) || []);
+  // 免打扰的会话不计入菜单栏与托盘的未读数，被 @ 时除外。
+  const unreadRooms = JSON.stringify(state?.rooms.filter(room => (!room.muted || unread[room.id]?.mentioned) && unread[room.id]?.hasUnread).map(room => room.id) || []);
   useEffect(() => {
     window.desktop?.activity?.({ currentRoomId: state?.me.id ? selected : null, unreadRooms: JSON.parse(unreadRooms) }).catch(error => notify(error.message));
   }, [unreadRooms, selected, state?.me.id, notify]);
@@ -147,12 +147,12 @@ export default function App() {
     const status = unread[target.id];
     const label = status?.exact ? `${status.count} 条未读消息` : '有新消息';
     const openMenu = (x, y) => setRoomMenu({ x, y, room: target });
-    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined}
+    return <button className={`conversation ${selected === target.id ? 'active' : ''} ${status?.hasUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''} ${status?.mentioned ? 'mentioned' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined}
       onClick={() => { if (!consumeLongPress(longPress)) openRoom(target.id); }} {...longPressHandlers(longPress, openMenu)}
       onContextMenu={event => { event.preventDefault(); if (!longPress.current.fired) openMenu(event.clientX, event.clientY); }}
       onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openMenu(rect.left + 24, rect.bottom); } }}>
       {roomIcon(target)}<span className="conversation-copy"><span className="conversation-title"><span className="conversation-name"><span className="conversation-label">{target.name}</span>{target.pinnedAt && <Pin className="conversation-flag" size={11} role="img" aria-label="已置顶" />}{target.muted && <BellOff className="conversation-flag" size={11} role="img" aria-label="免打扰" />}</span><time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
-        <span className="conversation-preview"><PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
+        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}<PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
       </span>
     </button>;
   };
@@ -196,10 +196,11 @@ export default function App() {
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
         {currentMessages.map((message, index) => { const previous = currentMessages[index - 1]; const newDay = !previous || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString(); return <React.Fragment key={message.id}>{newDay && <div className="date-divider"><span>{new Date(message.createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(message.createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<Message onContextMenu={(event, message) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, message }); }} message={message}
-          onReply={target => setReplying({ roomId: target.roomId, id: target.id })} nameOf={id => id === state.me.id ? '我' : userMap[id]?.name}
+          onReply={target => setReplying({ roomId: target.roomId, id: target.id })} nameOf={id => userMap[id]?.name}
           onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })} user={userMap[message.senderId]} mine={message.senderId === state.me.id} continued={!newDay && sameGroup(previous, message)} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} /></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />回到最新消息</button>}
       <Composer room={room} connected={connected} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
+        members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
         reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} /></section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
