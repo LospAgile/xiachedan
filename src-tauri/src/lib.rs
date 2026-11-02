@@ -171,6 +171,16 @@ fn open_notification(app: &AppHandle, id: Option<i32>) {
   show(app, &desktop, room.filter(|room| !room.is_empty()));
 }
 
+// 在通知里直接回复：交给页面以当前身份发送，不打开窗口。
+#[cfg(target_os = "macos")]
+fn reply_notification(app: &AppHandle, id: i32, text: String) {
+  let desktop = app.state::<Arc<Desktop>>();
+  let room = desktop.session.lock().unwrap().notification_rooms.get(&id).cloned();
+  if let Some(room) = room.filter(|room| !room.is_empty()) {
+    emit(app, &desktop, "notification-reply", json!({ "roomId": room, "text": text.chars().take(10000).collect::<String>() }));
+  }
+}
+
 fn go_home(app: &AppHandle, desktop: &Desktop) {
   if let Some(address) = cloud_origin().or_else(|| desktop.local_address().map(|(address, _)| address)) {
     let _ = open_address(app, desktop, &address, None);
@@ -282,7 +292,7 @@ fn notify(app: &AppHandle, desktop: &Desktop, room: &str, title: &str, body: &st
   let id = desktop.next_notification.fetch_add(1, Ordering::Relaxed);
   desktop.session.lock().unwrap().notification_rooms.insert(id, room.to_string());
   #[cfg(target_os = "macos")]
-  let shown: Result<(), ()> = { macos_notification::show(id, title, body); Ok(()) };
+  let shown: Result<(), ()> = { macos_notification::show(id, title, body, !room.is_empty()); Ok(()) };
   #[cfg(not(target_os = "macos"))]
   let shown = app.notification().builder().id(id).title(title).body(body).show();
   match shown {
@@ -718,7 +728,9 @@ pub fn run() {
       *desktop.tray.lock().unwrap() = Some(tray);
       let clicked = handle.clone();
       #[cfg(target_os = "macos")]
-      macos_notification::install(move |id| open_notification(&clicked, id));
+      let replied = handle.clone();
+      #[cfg(target_os = "macos")]
+      macos_notification::install(move |id| open_notification(&clicked, id), move |id, text| reply_notification(&replied, id, text));
       #[cfg(not(target_os = "macos"))]
       app.notification().on_action(move |performed| {
         if performed.action_id() != "tap" { return }

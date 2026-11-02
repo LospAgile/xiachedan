@@ -65,8 +65,14 @@ export default function App() {
   const longPress = useRef({ timer: 0, fired: false });
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
-  const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom,
+  const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom, onReply: (roomId, text) => replyFromNotification.current(roomId, text),
     onOpenRoom: roomId => { openRoom(roomId); setModal(null); setSearch(''); } });
+  // 通知里直接回复：以当前身份发到那个会话，成功后不打开窗口。
+  const replyFromNotification = useRef(() => {});
+  replyFromNotification.current = async (roomId, text) => {
+    try { const { message } = await api('messages', { roomId, text: text.trim(), clientId: `notify-${Date.now()}-${Math.random().toString(36).slice(2)}` }); receive(message); }
+    catch (error) { notify(`回复没有发出：${error.message}`); }
+  };
   const closeReadDetail = useCallback(() => setReadDetail(null), []);
   const onHistoryChanged = useCallback(({ cleared }) => {
     if (cleared) { setScrolledUp(false); sticky.current = true; }
