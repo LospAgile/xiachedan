@@ -91,7 +91,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const row = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(id);
     return row ? { senderId: row.original_sender, createdAt: row.original_created_at } : null;
   };
-  const serializeMessage = row => row ? { ...baseMessage(row), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const botOf = id => stmt('SELECT name FROM message_bots WHERE message_id=?').get(id)?.name || null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -214,7 +215,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       res.set({ 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, X-Linliao, X-Setup-Key', 'Access-Control-Max-Age': '600' });
       return res.sendStatus(204);
     }
-    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (!originOK(req) || req.get('X-Linliao') !== '1')) return next(fail('请求来源无效', 403));
+    // 机器人地址由外部服务器调用，凭令牌鉴权，不带浏览器的来源与自定义请求头。
+    const hook = req.path.startsWith('/api/hooks/');
+    if (!hook && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && (!originOK(req) || req.get('X-Linliao') !== '1')) return next(fail('请求来源无效', 403));
     next();
   });
   app.use(express.json({ limit: '64kb' }));
@@ -293,6 +296,27 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     }
     res.json({ me, switched: me.id !== current?.id });
   });
+  // 群机器人发消息：POST /api/hooks/:id/:token，正文 { "text": "..." }。
+  app.post('/api/hooks/:id/:token', (req, res) => {
+    const webhook = stmt('SELECT * FROM webhooks WHERE id=?').get(req.params.id);
+    const a = Buffer.from(hash(req.params.token)), b = Buffer.from(webhook?.token_hash || '');
+    if (!webhook || a.length !== b.length || !timingSafeEqual(a, b)) throw fail('机器人地址无效', 404);
+    rateLimit(req, 'hook', 30, 60000, `webhook:${webhook.id}`);
+    const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (!text) throw fail('消息内容不能为空');
+    if (text.length > 4000) throw fail('机器人消息最多 4000 个字符');
+    if (!stmt('SELECT 1 FROM rooms WHERE id=?').get(webhook.room_id)) throw fail('会话已不存在', 404);
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, webhook.room_id, `webhook:${webhook.id}`, text, '[]', `hook:${id}`, Date.now());
+      stmt('INSERT INTO message_bots VALUES (?,?)').run(id, webhook.name);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, webhook.room_id);
+    res.status(201).json({ ok: true, id });
+  });
   app.use('/api', (req, _res, next) => {
     req.user = authUser(req);
     next(req.user ? undefined : fail(cloud ? '请先登录并等待管理员审核通过' : '请先加入空间', 401));
@@ -356,7 +380,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -528,6 +552,49 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ ok: true });
+  });
+  // 群机器人由群主管理；大厅由空间创建者或管理员管理；私聊不能添加。令牌只在创建或重置时返回一次。
+  const requireHookManager = (roomId, user) => {
+    const room = requireRoom(roomId, user.id);
+    const manager = room.kind === 'group' ? groupSettings(room).ownerId === user.id
+      : room.kind === 'public' && (user.id === ownerId() || ['admin', 'super_admin'].includes(user.role));
+    if (!manager) throw fail(room.kind === 'direct' ? '私聊不能添加机器人' : '只有群主或管理员可以管理机器人', 403);
+    return room;
+  };
+  const webhookById = (id, user) => {
+    const webhook = typeof id === 'string' && stmt('SELECT * FROM webhooks WHERE id=?').get(id);
+    if (!webhook) throw fail('机器人不存在', 404);
+    requireHookManager(webhook.room_id, user);
+    return webhook;
+  };
+  const issueToken = id => {
+    const token = randomBytes(24).toString('hex');
+    stmt('UPDATE webhooks SET token_hash=? WHERE id=?').run(hash(token), id);
+    return { id, path: `/api/hooks/${id}/${token}` };
+  };
+  const hookView = row => ({ id: row.id, name: row.name, createdAt: row.created_at, createdBy: row.created_by });
+  app.get('/api/webhooks', (req, res) => {
+    const room = requireHookManager(req.query.roomId, req.user);
+    res.json({ webhooks: stmt('SELECT * FROM webhooks WHERE room_id=? ORDER BY created_at').all(room.id).map(hookView) });
+  });
+  app.post('/api/webhooks', (req, res) => {
+    rateLimit(req, 'webhooks', 20);
+    const room = requireHookManager(req.body?.roomId, req.user);
+    const name = textValue(req.body?.name, 24);
+    if (!name) throw fail('给机器人起个名字');
+    if (stmt('SELECT COUNT(*) AS n FROM webhooks WHERE room_id=?').get(room.id).n >= 10) throw fail('每个会话最多 10 个机器人');
+    const id = randomUUID();
+    stmt('INSERT INTO webhooks VALUES (?,?,?,?,?,?)').run(id, room.id, name, '', req.user.id, Date.now());
+    res.status(201).json({ webhook: hookView(stmt('SELECT * FROM webhooks WHERE id=?').get(id)), ...issueToken(id) });
+  });
+  app.post('/api/webhooks/reset', (req, res) => {
+    rateLimit(req, 'webhooks', 20);
+    res.json(issueToken(webhookById(req.body?.id, req.user).id));
+  });
+  app.post('/api/webhooks/delete', (req, res) => {
+    const webhook = webhookById(req.body?.id, req.user);
+    stmt('DELETE FROM webhooks WHERE id=?').run(webhook.id);
     res.json({ ok: true });
   });
   // 群主把群主身份转给群里的另一位成员。

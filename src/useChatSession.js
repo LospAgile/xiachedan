@@ -130,7 +130,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (!message.recalledAt && window.desktop?.message && current && message.senderId !== current.me.id && (!mutedRef?.current.has(message.roomId) || mentionsMe)) {
       const sender = current.users.find(user => user.id === message.senderId);
       const hidden = privacyRef.current;
-      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
+      const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
       window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
         title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
       }).catch(error => notify(error.message));

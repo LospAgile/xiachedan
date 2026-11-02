@@ -696,3 +696,17 @@ button.message-read-status.is-read { color: var(--text-1); }
   .account-row { flex-wrap: wrap; }
   .account-row .account-actions { flex-basis: 100%; padding-left: 48px; }
 }
+
+/* 群机器人 */
+.avatar-bot { background: var(--fill-2); color: var(--text-1); }
+.bot-tag { margin-left: 6px; padding: 0 5px; border-radius: 6px; background: var(--fill-2); color: var(--text-2); font-size: 10px; line-height: 16px; font-weight: 600; vertical-align: 1px; }
+.webhook-issued { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; padding: 12px; border-radius: 12px; background: var(--fill-1); }
+.webhook-issued input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.webhook-issued code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.webhook-list { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; padding: 0; list-style: none; }
+.webhook-list li { display: flex; align-items: center; gap: 10px; padding: 6px 4px; }
+.webhook-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--fill-2); }
+.webhook-name { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.danger-text { color: var(--danger-text); }
+.webhook-create { display: flex; gap: 8px; }
+.webhook-create input { flex: 1; min-width: 0; }

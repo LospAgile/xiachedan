@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy } from 'lucide-react';
-import { api, upload, formatSize } from './api';
+import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy, Bot } from 'lucide-react';
+import { api, upload, formatSize, absoluteUrl } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
@@ -200,6 +200,41 @@ export function GroupEditDialog({ room, field, onClose, onSaved }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (isName && !value.trim())}>{busy ? '正在保存…' : '保存'}</button></div>
   </form></Modal>;
+}
+
+// 群机器人：创建或重置后只显示一次完整地址，外部系统向它 POST { "text": "..." } 即可发消息。
+export function WebhooksDialog({ room, onClose, notify }) {
+  const [hooks, setHooks] = useState(null);
+  const [name, setName] = useState('');
+  const [issued, setIssued] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const load = () => api(`webhooks?roomId=${encodeURIComponent(room.id)}`).then(result => setHooks(result.webhooks)).catch(failure => setError(failure.message));
+  useEffect(() => { load(); }, [room.id]);
+  async function run(action) {
+    setBusy(true); setError('');
+    try { await action(); await load(); }
+    catch (failure) { setError(failure.message); }
+    finally { setBusy(false); }
+  }
+  const create = event => { event.preventDefault(); run(async () => { const result = await api('webhooks', { roomId: room.id, name }); setIssued({ name: result.webhook.name, url: absoluteUrl(result.path) }); setName(''); }); };
+  const reset = hook => run(async () => { const result = await api('webhooks/reset', { id: hook.id }); setIssued({ name: hook.name, url: absoluteUrl(result.path) }); });
+  const remove = hook => run(async () => { await api('webhooks/delete', { id: hook.id }); if (issued?.name === hook.name) setIssued(null); notify(`已删除机器人「${hook.name}」`); });
+  async function copy() {
+    try { await (window.desktop ? window.desktop.copy(issued.url) : navigator.clipboard.writeText(issued.url)); notify('机器人地址已复制'); }
+    catch { setError('复制失败，请选中上方地址复制'); }
+  }
+  return <Modal title="群机器人" subtitle={`外部系统可以通过机器人往「${room.name}」发消息，例如告警、构建结果、日报。`} onClose={() => !busy && onClose()}>
+    {issued && <section className="webhook-issued" aria-live="polite"><b>「{issued.name}」的地址</b><input aria-label="机器人地址" value={issued.url} readOnly onFocus={event => event.target.select()} />
+      <button type="button" className="primary-button full" onClick={copy}><Copy size={15} />复制地址</button>
+      <p className="inline-note">地址里含有密钥，只显示这一次，请妥善保存；泄露后可以重置。用法：向地址 POST JSON <code>{'{"text":"内容"}'}</code>，每分钟最多 30 条。</p></section>}
+    <ul className="webhook-list">{hooks?.map(hook => <li key={hook.id}><span className="webhook-icon"><Bot size={16} /></span><span className="webhook-name">{hook.name}</span>
+      <button type="button" className="text-button" disabled={busy} onClick={() => reset(hook)}>重置地址</button><button type="button" className="text-button danger-text" disabled={busy} onClick={() => remove(hook)}>删除</button></li>)}</ul>
+    {hooks && !hooks.length && <p className="inline-note">还没有机器人。</p>}
+    <form className="webhook-create" onSubmit={create}><input aria-label="机器人名称" placeholder="机器人名称，例如：告警" value={name} maxLength={24} onChange={event => setName(event.target.value)} disabled={busy} />
+      <button className="primary-button" disabled={busy || !name.trim()}>{busy ? '请稍候…' : '添加'}</button></form>
+    {error && <p className="form-error" role="alert">{error}</p>}
+  </Modal>;
 }
 
 export function RecallDialog({ message, onClose, onRecalled }) {

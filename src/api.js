@@ -7,6 +7,8 @@ if (setup) {
 export const nativeTitlebar = Boolean(window.desktop) && window.desktop.platform !== 'windows';
 const backend = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const endpoint = route => `${backend}/api/${route}`;
+// 给外部系统用的完整地址（如机器人地址）：开发时指向后端，其余情况与页面同源。
+export const absoluteUrl = path => `${backend || location.origin}${path}`;
 export const socketUrl = () => {
   const url = new URL('/socket', backend || location.origin);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
