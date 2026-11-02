@@ -92,7 +92,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return row ? { senderId: row.original_sender, createdAt: row.original_created_at } : null;
   };
   const botOf = id => stmt('SELECT name FROM message_bots WHERE message_id=?').get(id)?.name || null;
-  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const editedAt = id => stmt('SELECT edited_at FROM message_edits WHERE message_id=?').get(id)?.edited_at || null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bot: botOf(row.id), editedAt: editedAt(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -361,12 +362,40 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_edits WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
       broadcast({ type: 'message-recalled', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
     }
     res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
+  });
+  // 编辑自己发的消息：只改正文；@提及只保留正文里仍写着的，不新增提醒，避免借编辑反复打扰别人。
+  app.post('/api/edit-message', (req, res) => {
+    rateLimit(req, 'edit', 60);
+    const id = req.body?.messageId;
+    if (typeof id !== 'string' || !id || id.length > 100) throw fail('消息标识无效');
+    const row = stmt('SELECT * FROM messages WHERE id=?').get(id);
+    if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
+    requireRoom(row.room_id, req.user.id);
+    if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
+    if (recalledAt(id)) throw fail('消息已撤回');
+    const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
+    if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
+    if (!text && row.attachments === '[]') throw fail('消息不能为空');
+    if (text !== row.text) {
+      const kept = mentionsOf(id).filter(target => target === '*' ? text.includes('@所有人') : text.includes(`@${userById(target)?.name}`));
+      db.exec('BEGIN');
+      try {
+        stmt('UPDATE messages SET text=? WHERE id=?').run(text, id);
+        stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
+        for (const target of kept) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
+        stmt('INSERT OR REPLACE INTO message_edits VALUES (?,?)').run(id, Date.now());
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+      broadcast({ type: 'message-edited', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
+    }
+    res.json({ message: withReads([serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id))])[0] });
   });
   app.get('/api/storage', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以管理聊天记录', 403);
@@ -380,7 +409,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose='message' AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose='message' AND claimed=1; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }

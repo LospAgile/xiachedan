@@ -6,13 +6,15 @@ import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping }) {
+export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
+  const [editText, setEditText] = useState('');
   const input = useRef();
   const fileInput = useRef();
   const textarea = useRef();
@@ -61,7 +63,17 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     URL.revokeObjectURL(item.url);
     update(room.id, state => ({ ...state, files: state.files.filter(file => file.id !== item.id) }));
   }
+  async function saveEdit() {
+    const text = editText.trim();
+    if (sending || !connected) return;
+    if (text === editing.text) return onCancelEdit();
+    if (!text && !editing.attachments.length) return notify('消息不能为空');
+    setSending(true);
+    try { onEdited((await api('edit-message', { messageId: editing.id, text })).message); }
+    catch (error) { notify(error.message); } finally { setSending(false); }
+  }
   async function send() {
+    if (editing) return saveEdit();
     if (sending || !connected || (!draft.text.trim() && !draft.files.length) || draft.files.some(file => !file.attachment)) return;
     const roomId = room.id;
     const snapshot = draft;
@@ -89,10 +101,15 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     if (!node) return;
     node.style.height = 'auto';
     node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
-  }, [draft.text, room.id]);
-  const ready = connected && !sending && (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment);
+  }, [draft.text, editText, editing?.id, room.id]);
+  const ready = connected && !sending && (editing || ((draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment)));
   // 选择回复时把焦点交给输入框。
   useEffect(() => { if (reply) textarea.current?.focus({ preventScroll: true }); }, [reply?.id]);
+  useEffect(() => {
+    if (!editing) return;
+    setEditText(editing.text);
+    requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
+  }, [editing?.id]);
   useEffect(() => setPicker(null), [room.id]);
   return <div className="composer-area">
     {picker && candidates.length > 0 && <div className="mention-picker" role="listbox" id="mention-picker" aria-label="选择要提及的成员">
@@ -101,8 +118,9 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
         {user.id === '*' ? <span className="mention-everyone"><Users size={13} /></span> : <Avatar user={user} size={22} />}<span>{user.name}</span>{user.id === '*' && <small>提醒会话里的每个人</small>}
       </button>)}
     </div>}
-    {reply && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
-    {draft.files.length > 0 && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
+    {editing && <div className="reply-bar editing-bar" role="status"><span className="reply-copy"><b>编辑消息</b><PrivatePreview privateMode={privateMode}>{previewText(editing)}</PrivatePreview></span><IconButton icon={X} label="取消编辑" size={14} onClick={onCancelEdit} /></div>}
+    {reply && !editing && <div className="reply-bar" role="status"><span className="reply-copy"><b>回复 {replyAuthor}</b><PrivatePreview privateMode={privateMode}>{previewText(reply)}</PrivatePreview></span><IconButton icon={X} label="取消回复" size={14} onClick={onCancelReply} /></div>}
+    {draft.files.length > 0 && !editing && <div className="attachment-queue">{draft.files.map(item => <div className={`queued-file ${item.error ? 'failed' : ''}`} key={item.id}>
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video">{item.file.type.startsWith('video/') ? <Film size={18} /> : <FileText size={18} />}</span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
@@ -118,9 +136,10 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     {attachMenu && <ContextMenu menu={attachMenu} onClose={() => setAttachMenu(null)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
-      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
+      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {
+          if (editing) { setEditText(event.target.value); return; }
           update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target);
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
@@ -132,11 +151,14 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
             if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(candidates[picker.index]); return; }
             if (event.key === 'Escape') { event.preventDefault(); setPicker(null); return; }
           }
+          if (event.key === 'Escape' && editing) { event.preventDefault(); onCancelEdit?.(); return; }
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
+          // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
+          if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
         }} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label="发送消息" title="Enter 发送 · Shift + Enter 换行">{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>

@@ -180,7 +180,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readNode = mine && recipients.length > 0 && Array.isArray(message.readBy) && (direct
     ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
     : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
-  const meta = <span className="bubble-meta">{time}{readNode}</span>;
+  const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}{readNode}</span>;
   const lastFile = message.attachments.at(-1);
   const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
   const showName = !mine && !direct && !continued;

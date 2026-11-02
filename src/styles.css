@@ -710,3 +710,4 @@ button.message-read-status.is-read { color: var(--text-1); }
 .danger-text { color: var(--danger-text); }
 .webhook-create { display: flex; gap: 8px; }
 .webhook-create input { flex: 1; min-width: 0; }
+.edited-mark { margin-right: 4px; }
