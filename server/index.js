@@ -690,6 +690,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
+  // 会话里发过的图片、视频和文件，最新的在前；撤回或已清空的不列出。
+  app.get('/api/room-files', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const kind = req.query.kind === 'file' ? 'file' : 'media';
+    const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+    const media = "json_extract(f.value, '$.mime') LIKE 'image/%' OR json_extract(f.value, '$.mime') LIKE 'video/%'";
+    const rows = stmt(`SELECT m.id AS messageId, m.seq, m.sender_id AS senderId, m.created_at AS createdAt, f.value AS file FROM messages m, json_each(m.attachments) f
+      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
+      ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before);
+    res.json({ items: rows.slice(0, 60).map(row => ({ ...row, file: JSON.parse(row.file) })), hasMore: rows.length > 60 });
+  });
   // 只读检索文字与附件文件名：带 roomId 时只查该会话，否则查自己能访问的全部会话；撤回与已清空的消息不会命中。
   app.get('/api/search', (req, res) => {
     const roomIds = req.query.roomId === undefined
