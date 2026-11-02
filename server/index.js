@@ -145,12 +145,31 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); return { ...user, removed, online: !removed && online.has(user.id) }; });
   };
+  // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
+  const groupSettings = room => {
+    const members = JSON.parse(room.members);
+    const row = stmt('SELECT * FROM room_settings WHERE room_id=?').get(room.id);
+    return { ownerId: row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null,
+      announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
+  };
+  const saveSettings = (roomId, change) => {
+    const current = stmt('SELECT * FROM room_settings WHERE room_id=?').get(roomId) || { owner_id: null, announcement: '', announcement_at: null, announcement_by: null };
+    const next = { ...current, ...change };
+    stmt('INSERT OR REPLACE INTO room_settings (room_id,owner_id,announcement,announcement_at,announcement_by) VALUES (?,?,?,?,?)').run(roomId, next.owner_id, next.announcement, next.announcement_at, next.announcement_by);
+  };
+  const requireGroupOwner = (roomId, userId) => {
+    const room = requireRoom(roomId, userId);
+    if (room.kind !== 'group') throw fail('只有群聊可以这样设置');
+    if (groupSettings(room).ownerId !== userId) throw fail('只有群主可以这样设置', 403);
+    return room;
+  };
   const roomsFor = userId => {
     const preferences = new Map(stmt('SELECT room_id, pinned_at, muted FROM room_preferences WHERE user_id=?').all(userId).map(row => [row.room_id, row]));
     return stmt('SELECT * FROM rooms ORDER BY created_at').all()
       .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
         members: JSON.parse(room.members), lastMessage: serializeMessage(stmt('SELECT * FROM messages WHERE room_id=? ORDER BY seq DESC LIMIT 1').get(room.id)),
-        pinnedAt: preferences.get(room.id)?.pinned_at || null, muted: Boolean(preferences.get(room.id)?.muted) }));
+        pinnedAt: preferences.get(room.id)?.pinned_at || null, muted: Boolean(preferences.get(room.id)?.muted),
+        ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   };
   const stateFor = user => {
     const rooms = roomsFor(user.id);
@@ -480,6 +499,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       room = { id: randomUUID(), name, kind: 'group', members: [...new Set([req.user.id, ...ids])] };
     }
     stmt('INSERT INTO rooms (id,name,kind,members,created_at) VALUES (?,?,?,?,?)').run(room.id, room.name, room.kind, JSON.stringify(room.members), Date.now());
+    if (room.kind === 'group') saveSettings(room.id, { owner_id: req.user.id });
     broadcast({ type: 'rooms' }, room.id);
     res.status(201).json({ id: room.id });
   });
@@ -495,6 +515,47 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT OR REPLACE INTO room_preferences (user_id,room_id,pinned_at,muted) VALUES (?,?,?,?)').run(req.user.id, room.id, pinnedAt, mutedValue);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
     res.json({ roomId: room.id, pinnedAt, muted: Boolean(mutedValue) });
+  });
+  // 群主改群名、写群公告（留空即撤下公告）。
+  app.post('/api/room-settings', (req, res) => {
+    rateLimit(req, 'room-settings', 30);
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const { name, announcement } = req.body;
+    if ((name !== undefined && typeof name !== 'string') || (announcement !== undefined && typeof announcement !== 'string') || (name === undefined && announcement === undefined)) throw fail('群设置无效');
+    if (name !== undefined) {
+      const value = textValue(name, 24);
+      if (!value) throw fail('请输入群聊名称');
+      stmt('UPDATE rooms SET name=? WHERE id=?').run(value, room.id);
+    }
+    if (announcement !== undefined) {
+      if (announcement.trim().length > 500) throw fail('群公告最多 500 个字');
+      const text = announcement.trim();
+      saveSettings(room.id, { announcement: text, announcement_at: text ? Date.now() : null, announcement_by: text ? req.user.id : null });
+    }
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
+  });
+  // 退出群聊：群主退出时由最早的成员接任；最后一个人退出后群聊对所有人不可见。
+  app.post('/api/room-leave', (req, res) => {
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind !== 'group') throw fail('只能退出群聊');
+    const members = JSON.parse(room.members).filter(id => id !== req.user.id);
+    const ownerId = groupSettings(room).ownerId;
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
+    stmt('DELETE FROM room_preferences WHERE user_id=? AND room_id=?').run(req.user.id, room.id);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ ok: true });
+  });
+  // 群主把群主身份转给群里的另一位成员。
+  app.post('/api/room-owner', (req, res) => {
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const target = req.body?.userId;
+    if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
+    saveSettings(room.id, { owner_id: target });
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
   });
   app.post('/api/room-members', (req, res) => {
     rateLimit(req, 'members', 20);

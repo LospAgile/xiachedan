@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown } from 'lucide-react';
 import { api, formatTime, mediaUrl, nativeTitlebar } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useDesktopBridge from './useDesktopBridge';
@@ -24,6 +24,8 @@ export default function App() {
   const [reactingTo, setReactingTo] = useState(null);
   const [selection, setSelection] = useState(null);
   const [forwarding, setForwarding] = useState(null);
+  const [groupAction, setGroupAction] = useState(null);
+  const [dismissedNotices, setDismissedNotices] = useState(() => readStorage('linliao.announcements', {}));
   const [readDetail, setReadDetail] = useState(null);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
@@ -86,6 +88,7 @@ export default function App() {
     window.desktop?.activity?.({ currentRoomId: state?.me.id ? selected : null, unreadRooms: JSON.parse(unreadRooms) }).catch(error => notify(error.message));
   }, [unreadRooms, selected, state?.me.id, notify]);
   useEffect(() => { localStorage.setItem('linliao.read', JSON.stringify(lastRead)); }, [lastRead]);
+  useEffect(() => { localStorage.setItem('linliao.announcements', JSON.stringify(dismissedNotices)); }, [dismissedNotices]);
   useEffect(() => { if (privateMode) setPreview(null); }, [privateMode]);
   useEffect(() => { setSelection(null); setReactingTo(null); }, [selected]);
   useEffect(() => {
@@ -177,7 +180,9 @@ export default function App() {
       </span>
     </button>;
   };
-  const memberRow = (user, size) => <div className="managed-member" key={user.id}><button className="member-row" onClick={() => directMessage(user)}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.id === state.me.id && <small className="me-tag">我</small>}</span><small>{user.online ? '在线' : '离线'}</small><ChevronRight size={14} /></button>{isOwner && !cloud && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}</div>;
+  const groupOwner = room.kind === 'group' ? room.ownerId : null;
+  const memberRow = (user, size, inGroup = false) => <div className="managed-member" key={user.id}><button className="member-row" onClick={() => directMessage(user)}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.id === state.me.id && <small className="me-tag">我</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small>{user.online ? '在线' : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && isOwner && !cloud && user.id !== state.me.id && <button className="remove-member" onClick={() => setRemoving(user)} aria-label={`从空间移除${user.name}`}>移除</button>}
+    {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>;
   const subtitle = room.kind === 'direct' ? peer?.online ? '在线' : '离线 · 上线后送达' : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
@@ -211,6 +216,10 @@ export default function App() {
             <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => { setShowMembers(value => !value); setPanelView('members'); }} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
           </div>
         </header>
+        {room.kind === 'group' && room.announcement && dismissedNotices[room.id] !== room.announcement.updatedAt && <div className="announcement-banner glass" role="note">
+          <Megaphone size={15} /><p><b>群公告</b><PrivatePreview privateMode={privateMode}>{room.announcement.text}</PrivatePreview></p>
+          <IconButton icon={X} label="不再显示这条公告" size={14} onClick={() => setDismissedNotices(previous => ({ ...previous, [room.id]: room.announcement.updatedAt }))} />
+        </div>}
         {!connected && <div className="offline-pill glass" role="status"><WifiOff size={14} />正在重新连接，草稿会保留</div>}
         <div className="message-scroll" ref={messageList} onScroll={event => { const node = event.currentTarget; sticky.current = node.scrollHeight - node.scrollTop - node.clientHeight < 100; setScrolledUp(!sticky.current); }}><div className="message-list" ref={messageContent}>
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
@@ -231,7 +240,14 @@ export default function App() {
         reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
-        : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><div className="members-list">{groupMembers.map(user => memberRow(user, 30))}</div></>}</aside>}</div>
+        : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button>
+          {room.kind === 'group' && <>
+            {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
+            <section className="announcement-card" aria-label="群公告"><div className="announcement-heading"><Megaphone size={14} /><b>群公告</b>{groupOwner === state.me.id && <button className="text-button" onClick={() => setGroupAction({ type: 'announcement' })}>{room.announcement ? '编辑' : '发布'}</button>}</div>
+              <p>{room.announcement?.text || '暂无公告'}</p></section>
+          </>}
+          <div className="members-list">{groupMembers.map(user => memberRow(user, 30, room.kind === 'group'))}</div>
+          {room.kind === 'group' && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />退出群聊</button>}</>}</aside>}</div>
     </main>
     {modal === 'profile' && <ProfileDialog me={state.me} onClose={() => setModal(null)} onUpdate={updateMe} notify={notify} />}
     {modal === 'invite' && <InviteDialog cloud={cloud} onClose={() => setModal(null)} notify={notify} />}
@@ -254,6 +270,12 @@ export default function App() {
       { label: roomMenu.room.pinnedAt ? '取消置顶' : '置顶', onSelect: () => changePreference(roomMenu.room, { pinned: !roomMenu.room.pinnedAt }) },
       { label: roomMenu.room.muted ? '取消免打扰' : '消息免打扰', onSelect: () => changePreference(roomMenu.room, { muted: !roomMenu.room.muted }) },
     ]} />}
+    {groupAction?.type === 'name' && room.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
+    {groupAction?.type === 'announcement' && room.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}
+    {groupAction?.type === 'transfer' && <ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你将不能再修改群名和群公告。" confirmLabel="确认转让" busyLabel="正在转让…"
+      onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} />}
+    {groupAction?.type === 'leave' && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
+      onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => { syncHistory([message]); notify('消息已撤回'); }} />}
     {toastElement}
