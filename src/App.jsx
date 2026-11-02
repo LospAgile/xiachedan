@@ -53,7 +53,7 @@ export default function App() {
     setPreview(null); setContextMenu(null); setRecalling(null); setReadDetail(null);
   }, []);
   const { bootstrap, state, startupError, start, refresh, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, typing, sendTyping } = useChatSession({ selected, notify, privacyRef, onHistoryChanged });
   useEffect(() => {
     if (!state?.me.id) return;
     firstLoad.current = true; sticky.current = true; setScrolledUp(false);
@@ -165,6 +165,12 @@ export default function App() {
   const isOwner = state.workspace.ownerId === state.me.id;
   const cloud = state.workspace.mode === 'cloud';
   const isAdmin = ['admin', 'super_admin'].includes(state.me.role);
+  // 正在输入的人（不含自己）；私聊只说「对方」。
+  const typingLabel = target => {
+    const names = Object.keys(typing[target.id] || {}).filter(id => id !== state.me.id).map(id => userMap[id]?.name).filter(Boolean);
+    if (!names.length) return '';
+    return target.kind === 'direct' ? '对方正在输入…' : `${names.slice(0, 2).join('、')}${names.length > 2 ? ` 等 ${names.length} 人` : ''} 正在输入…`;
+  };
   const roomIcon = (target, size = 32) => target.kind === 'direct' ? <Avatar user={peerOf(target)} size={size} online={peerOf(target)?.online} /> : <span className="room-avatar">{target.kind === 'public' ? <Hash size={16} /> : <Users size={16} />}</span>;
   const openRoom = id => { setSelected(id); setMobileChat(true); setReadDetail(null); setPanelView('members'); };
   const roomButton = target => {
@@ -176,7 +182,7 @@ export default function App() {
       onContextMenu={event => { event.preventDefault(); if (!longPress.current.fired) openMenu(event.clientX, event.clientY); }}
       onKeyDown={event => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openMenu(rect.left + 24, rect.bottom); } }}>
       {roomIcon(target)}<span className="conversation-copy"><span className="conversation-title"><span className="conversation-name"><span className="conversation-label">{target.name}</span>{target.pinnedAt && <Pin className="conversation-flag" size={11} role="img" aria-label="已置顶" />}{target.muted && <BellOff className="conversation-flag" size={11} role="img" aria-label="免打扰" />}</span><time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
-        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}<PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
+        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}{typingLabel(target) ? <span className="typing-text">{typingLabel(target)}</span> : <PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>}{status?.hasUnread && <span className="unread-badge" aria-label={label} title={label}>{status.exact ? status.count > 99 ? '99+' : status.count : '新'}</span>}</span>
       </span>
     </button>;
   };
@@ -210,7 +216,7 @@ export default function App() {
       <div className="conversation-body"><section className="chat-column">
         <header className="chat-toolbar" data-drag-region>
           <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />
-          <div className="toolbar-title glass"><span className="toolbar-icon">{room.kind === 'public' ? <Hash size={15} /> : room.kind === 'group' ? <Users size={15} /> : <Avatar user={peer} size={20} online={peer?.online} />}</span><h2>{room.name}</h2><span className="toolbar-subtitle">{subtitle}</span></div>
+          <div className="toolbar-title glass"><span className="toolbar-icon">{room.kind === 'public' ? <Hash size={15} /> : room.kind === 'group' ? <Users size={15} /> : <Avatar user={peer} size={20} online={peer?.online} />}</span><h2>{room.name}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></div>
           <div className="toolbar-actions">
             <button className={`toolbar-button glass privacy-toggle ${privateMode ? 'enabled' : ''}`} onClick={() => changePrivacy(value => !value)} role="switch" aria-checked={privateMode} aria-label="隐私模式" title="隐私模式 · ⌘⇧P · 悬停消息查看内容">{privateMode ? <EyeOff size={16} /> : <Eye size={16} />}<kbd>⌘⇧P</kbd></button>
             <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => { setShowMembers(value => !value); setPanelView('members'); }} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
@@ -237,7 +243,7 @@ export default function App() {
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
       </div> : <Composer room={room} connected={connected} onSent={message => { sticky.current = true; receive(message); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
-        reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
+        onTyping={sendTyping} reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : '会话成员'}>{panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button>
