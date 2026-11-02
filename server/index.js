@@ -399,6 +399,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('BEGIN');
       try {
         if (removedBy) stmt('INSERT OR IGNORE INTO message_removals VALUES (?,?,?)').run(id, removedBy.id, Date.now());
+        stmt('DELETE FROM room_pins WHERE message_id=?').run(id);
         for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
@@ -484,7 +485,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -728,6 +729,28 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt('SELECT * FROM messages WHERE room_id=? AND seq<? ORDER BY seq DESC LIMIT 51').all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
+  });
+  // 会话内置顶消息。
+  const canPin = (room, user) => room.kind === 'direct' || isManager(user) || (room.kind === 'group' && groupSettings(room).ownerId === user.id);
+  const pinsOf = room => stmt(`SELECT p.pinned_by AS pinnedBy, p.pinned_at AS pinnedAt, m.* FROM room_pins p JOIN messages m ON m.id=p.message_id
+    WHERE p.room_id=? AND m.seq>? ORDER BY p.pinned_at DESC`).all(room.id, clearedThroughSeq()).map(row => ({ pinnedBy: row.pinnedBy, pinnedAt: row.pinnedAt, message: serializeMessage(row) }));
+  app.get('/api/room-pins', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    res.json({ pins: pinsOf(room), canPin: canPin(room, req.user) });
+  });
+  app.post('/api/room-pins', (req, res) => {
+    rateLimit(req, 'pins', 30);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (!canPin(room, req.user)) throw fail('只有群主或管理员可以置顶消息', 403);
+    const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
+    if (!message || message.room_id !== room.id || message.seq <= clearedThroughSeq() || recalledAt(message.id)) throw fail('消息不存在或已撤回', 404);
+    if (req.body.pinned === false) stmt('DELETE FROM room_pins WHERE room_id=? AND message_id=?').run(room.id, message.id);
+    else {
+      if (stmt('SELECT COUNT(*) AS n FROM room_pins WHERE room_id=?').get(room.id).n >= 20 && !stmt('SELECT 1 FROM room_pins WHERE room_id=? AND message_id=?').get(room.id, message.id)) throw fail('每个会话最多置顶 20 条消息');
+      stmt('INSERT OR IGNORE INTO room_pins VALUES (?,?,?,?)').run(room.id, message.id, req.user.id, Date.now());
+    }
+    broadcast({ type: 'room-pins', roomId: room.id }, room.id);
+    res.json({ pins: pinsOf(room) });
   });
   // 链接预览：按网址缓存；同一网址同时只抓一次。CHAT_LINK_PREVIEW=off 可以整体关闭。
   const previewing = new Map();

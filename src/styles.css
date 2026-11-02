@@ -779,3 +779,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .voice-track i { display: block; height: 100%; background: currentColor; transform-origin: left; }
 .voice-time { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; }
 .mine .voice-track { background: rgba(255, 255, 255, .35); }
+
+/* 会话置顶消息 */
+.pinned-bar { position: absolute; z-index: 2; top: 64px; left: 24px; right: 24px; max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 4px; border-radius: 14px; font-size: 12px; line-height: 17px; }
+.pinned-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 10px; text-align: left; }
+.pinned-open > svg { flex: none; color: var(--accent-icon); }
+.pinned-open span { display: flex; flex-direction: column; min-width: 0; }
+.pinned-open b { color: var(--accent-bright); font-weight: 600; }
+.pinned-open .private-preview { color: var(--text-1); }
+.pinned-bar .icon-button { width: 24px; height: 24px; flex: none; }
+.pinned-bar ~ .announcement-banner { top: 116px; }
+@media (hover: hover) and (pointer: fine) { .pinned-open:hover { background: var(--fill-1); } }
