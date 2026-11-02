@@ -63,6 +63,17 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     URL.revokeObjectURL(item.url);
     update(room.id, state => ({ ...state, files: state.files.filter(file => file.id !== item.id) }));
   }
+  // ⌘B 粗体、⌘I 斜体、⌘E 代码、⌘⇧X 删除线（Windows 用 Ctrl）：给选中的文字加上格式符号。
+  function wrapSelection(event) {
+    const mark = { b: '**', i: '*', e: '`', x: event.shiftKey ? '~~' : null }[event.key.toLowerCase()];
+    if (!mark || !(event.metaKey || event.ctrlKey) || event.altKey || (event.shiftKey && mark !== '~~')) return false;
+    event.preventDefault();
+    const node = event.currentTarget, { selectionStart: start, selectionEnd: end, value } = node;
+    const next = value.slice(0, start) + mark + value.slice(start, end) + mark + value.slice(end);
+    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
+    requestAnimationFrame(() => node.setSelectionRange(start + mark.length, end + mark.length));
+    return true;
+  }
   async function saveEdit() {
     const text = editText.trim();
     if (sending || !connected) return;
@@ -151,6 +162,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
             if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(candidates[picker.index]); return; }
             if (event.key === 'Escape') { event.preventDefault(); setPicker(null); return; }
           }
+          if (wrapSelection(event)) return;
           if (event.key === 'Escape' && editing) { event.preventDefault(); onCancelEdit?.(); return; }
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
@@ -158,7 +170,7 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
           if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
         }} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 支持 **粗体** `代码` 等简单格式'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
+import { FormattedText } from './markdown';
 import appIcon from './assets/brand/app-icon.svg';
 
 export const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
@@ -85,20 +86,9 @@ export const consumeLongPress = state => { const fired = state.current.fired; st
 // 长按时没有原生事件，给右键菜单处理器一个带坐标的替身。
 export const pressEvent = (clientX, clientY) => ({ clientX, clientY, preventDefault() {}, stopPropagation() {} });
 
-// 把正文里「@名字」高亮出来；@我和@所有人用更醒目的样式。
+// 正文：简单格式与 @提及高亮；@我和@所有人用更醒目的样式。
 function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
-  const tokens = mentions.map(id => ({ id, label: `@${id === '*' ? '所有人' : nameOf?.(id) || ''}` })).filter(token => token.label.length > 1)
-    .sort((a, b) => b.label.length - a.label.length);
-  if (!tokens.length) return <p className="message-text">{text}{meta}</p>;
-  const parts = [];
-  for (let start = 0; start < text.length;) {
-    let found = null;
-    for (const token of tokens) { const index = text.indexOf(token.label, start); if (index >= 0 && (!found || index < found.index)) found = { ...token, index }; }
-    if (!found) { parts.push(text.slice(start)); break; }
-    parts.push(text.slice(start, found.index), <span key={found.index} className={`mention ${found.id === viewerId || found.id === '*' ? 'self' : ''}`}>{found.label}</span>);
-    start = found.index + found.label.length;
-  }
-  return <p className="message-text">{parts}{meta}</p>;
+  return <FormattedText text={text} mentions={mentions} nameOf={nameOf} viewerId={viewerId} tail={meta} />;
 }
 
 // 群聊里按成员给昵称着色：同一个人颜色固定。

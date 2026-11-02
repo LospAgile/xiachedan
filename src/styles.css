@@ -711,3 +711,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .webhook-create { display: flex; gap: 8px; }
 .webhook-create input { flex: 1; min-width: 0; }
 .edited-mark { margin-right: 4px; }
+
+/* 消息简单格式 */
+.message-text p { margin: 0; }
+.message-text p + *, .message-text pre + *, .message-text blockquote + *, .message-text ul + *, .message-text ol + * { margin-top: 6px; }
+.message-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.message-text code { padding: 0 4px; border-radius: 4px; background: var(--fill-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+.message-text pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--fill-2); overflow-x: auto; white-space: pre; }
+.message-text pre code { padding: 0; background: none; font-size: 12.5px; line-height: 18px; }
+.message-text blockquote { margin: 0; padding: 0 0 0 9px; border-left: 3px solid currentColor; opacity: .85; }
+.message-text ul, .message-text ol { margin: 0; padding-left: 20px; white-space: normal; }
+.mine .message-text code, .mine .message-text pre { background: rgba(0, 0, 0, .18); }
