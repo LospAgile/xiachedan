@@ -139,11 +139,18 @@ function UpdateSettings({ update, onUpdate, notify }) {
         : <button type="button" className="secondary-button" disabled={Boolean(busy) || update?.enabled === false} onClick={check}>{busy === 'check' ? '检查中…' : '检查更新'}</button>}
     </div>
     {busy === 'install' && <div className="update-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? 0}><i style={{ transform: `scaleX(${(percent ?? 0) / 100})` }} /></div>}
-    {update?.available && update.notes && <p className="update-notes">{update.notes}</p>}
+    {update?.available && update.notes && <div className="update-notes"><FormattedText text={releaseNotes(update.notes)} /></div>}
     {busy === 'install' && <p className="inline-note">下载完成后会自动安装并重新启动虾扯蛋。</p>}
     {error && <p className="form-error" role="alert">{error}</p>}
   </section>;
 }
+
+// 更新说明来自 GitHub Release 正文：标题转成粗体，PR 链接缩成 #编号，其余交给聊天里的格式渲染。
+const releaseNotes = notes => notes.replace(/\r\n?/g, '\n')
+  .replace(/^#{1,6}\s+(.+)$/gm, (_, title) => `**${title.trim() === "What's Changed" ? '更新内容' : title.trim()}**`)
+  .replace(/^\*\*Full Changelog\*\*:\s*(\S+)$/gm, '[查看完整更新记录]($1)')
+  .replace(/\bin (https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+))/g, '[#$2]($1)')
+  .replace(/\n\s*\n+/g, '\n').trim();
 
 export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance }) {
   const cloud = workspace.mode === 'cloud';
