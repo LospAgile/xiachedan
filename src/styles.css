@@ -347,7 +347,7 @@ textarea { resize: none; line-height: 20px; }
 .reaction-chips button.reacted { background: rgba(232, 120, 79, .16); box-shadow: inset 0 0 0 1px rgba(232, 120, 79, .55); }
 @media (hover: hover) and (pointer: fine) { .reaction-chips button:hover { background: var(--fill-2); } }
 .message-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px; border-radius: 10px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
-.message-quote b { font-weight: 600; color: var(--text-1); }
+.message-quote b { font-weight: 600; color: var(--quote-color, var(--text-1)); }
 .message-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .has-media .message-quote { margin: 4px 4px 2px; width: auto; }
 .mine .message-quote { background: rgba(0, 0, 0, .16); color: #fff; }
@@ -856,3 +856,12 @@ button.message-read-status.is-read { color: var(--text-1); }
 .accent-swatch.custom { background: conic-gradient(#e5484d, #d4a017, #22a35a, #14b8a6, #3b82f6, #8b5cf6, #e8508f, #e5484d); }
 .accent-swatch.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .font-size-control { margin-top: 12px; grid-template-columns: repeat(4, 1fr); }
+
+/* 引用块左侧竖条用被引用者的名字颜色 */
+.message-quote { box-shadow: inset 3px 0 0 var(--quote-color, var(--accent-bright)); }
+.mine .message-quote { box-shadow: inset 3px 0 0 #fff; }
+.name-colors { align-items: center; margin: 6px 0 4px; }
+.name-color-auto { min-height: 26px; padding: 0 10px; border-radius: 13px; background: var(--fill-1); color: var(--text-2); font-size: 12px; }
+.name-color-auto.active { box-shadow: 0 0 0 2px var(--accent-icon); color: var(--text-1); }
+.name-color-preview { margin-left: 4px; font-size: 14px; }
+.message-row:not(.mine) .message-quote[style] { background: color-mix(in srgb, var(--quote-color) 12%, transparent); }

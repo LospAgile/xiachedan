@@ -34,3 +34,23 @@ describe('个人资料与最后在线', () => {
     assert.ok(bobView.lastSeen >= before);
   });
 });
+
+describe('名字颜色', () => {
+  let space, alice, bob;
+  before(async () => {
+    space = await startLocal();
+    alice = await space.join('Alice');
+    bob = await space.join('Bob');
+  });
+  after(() => space.close());
+
+  test('可以选 7 种颜色之一，其他人看得到；null 恢复自动；无效值被拒绝', async () => {
+    await alice.post('/api/profile', { name: 'Alice', nameColor: 3 });
+    assert.equal((await bob.get('/api/state')).body.users.find(user => user.id === alice.id).nameColor, 3);
+    await alice.post('/api/profile', { name: 'Alice' });
+    assert.equal((await bob.get('/api/state')).body.users.find(user => user.id === alice.id).nameColor, 3);
+    await alice.post('/api/profile', { name: 'Alice', nameColor: null });
+    assert.equal((await bob.get('/api/state')).body.users.find(user => user.id === alice.id).nameColor, null);
+    assert.equal((await alice.post('/api/profile', { name: 'Alice', nameColor: 9 })).status, 400);
+  });
+});

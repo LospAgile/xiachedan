@@ -110,14 +110,17 @@ function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
 }
 
 // 群聊里按成员给昵称着色：同一个人颜色固定。
-const nameColor = id => `var(--name-${[...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;
+// 自己选了颜色就用选的，否则按身份固定分配。
+export const nameColor = (id, user) => `var(--name-${Number.isInteger(user?.nameColor) ? user.nameColor : [...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;
 
 // 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
-export function Quote({ reply, author, onOpen, className = '' }) {
+// 引用块的竖条和名字用被引用者的名字颜色（Telegram 式）。
+export function Quote({ reply, author, onOpen, className = '', color }) {
   const unavailable = reply.recalled ? '引用的消息已撤回' : reply.missing ? '引用的消息已被清空' : '';
   const body = <><b>{author}</b><span>{unavailable || previewText(reply)}</span></>;
-  return unavailable || !onOpen ? <div className={`message-quote ${unavailable ? 'unavailable' : ''} ${className}`}>{unavailable ? <span>{unavailable}</span> : body}</div>
-    : <button type="button" className={`message-quote ${className}`} onClick={onOpen} title="查看原消息">{body}</button>;
+  const style = color ? { '--quote-color': color } : undefined;
+  return unavailable || !onOpen ? <div className={`message-quote ${unavailable ? 'unavailable' : ''} ${className}`} style={style}>{unavailable ? <span>{unavailable}</span> : body}</div>
+    : <button type="button" className={`message-quote ${className}`} style={style} onClick={onOpen} title="查看原消息">{body}</button>;
 }
 
 // 表情选择条：Esc 或点到外面关闭，选完即关。
@@ -143,7 +146,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -194,9 +197,9 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const showName = !mine && !direct && !continued;
   const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
-    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
+    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
-    {message.replyTo && <Quote reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
+    {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
     {message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} /><div className="bubble-meta-row">{meta}</div></>
       : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
     {message.text && !message.poll && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}

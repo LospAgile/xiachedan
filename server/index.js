@@ -168,8 +168,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(cloud ? "SELECT u.id,u.name,u.avatar FROM users u JOIN accounts a ON a.user_id=u.id WHERE a.status IN ('approved','suspended') ORDER BY u.created_at" : 'SELECT id, name, avatar FROM users ORDER BY created_at').all();
     const profiles = new Map(stmt('SELECT * FROM user_profiles').all().map(row => [row.user_id, row]));
     const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
+    const colors = new Map(stmt('SELECT user_id, color FROM user_name_colors').all().map(row => [row.user_id, row.color]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
+      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -669,6 +670,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'profile', 20);
     const name = textValue(req.body.name, 24);
     if (!name) throw fail('昵称不能为空');
+    if (req.body.nameColor !== undefined && req.body.nameColor !== null && !(Number.isInteger(req.body.nameColor) && req.body.nameColor >= 0 && req.body.nameColor <= 6)) throw fail('名字颜色无效');
     const avatar = PRESETS.includes(req.body.avatar) ? req.body.avatar : req.user.avatar;
     stmt('UPDATE users SET name=?, avatar=? WHERE id=?').run(name, avatar, req.user.id);
     // 部门和签名可选；不传时保持原样。
@@ -677,6 +679,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const department = req.body.department === undefined ? current?.department || '' : textValue(req.body.department, 40);
       const bio = req.body.bio === undefined ? current?.bio || '' : textValue(req.body.bio, 120);
       stmt('INSERT INTO user_profiles (user_id,department,bio,last_seen) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET department=excluded.department, bio=excluded.bio').run(req.user.id, department, bio, current?.last_seen ?? null);
+    }
+    // 名字颜色：null 表示恢复自动分配。
+    if (req.body.nameColor !== undefined) {
+      if (req.body.nameColor === null) stmt('DELETE FROM user_name_colors WHERE user_id=?').run(req.user.id);
+      else stmt('INSERT OR REPLACE INTO user_name_colors VALUES (?,?)').run(req.user.id, req.body.nameColor);
     }
     broadcast({ type: 'users', users: users() });
     const profile = stmt('SELECT department, bio FROM user_profiles WHERE user_id=?').get(req.user.id);
