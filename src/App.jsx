@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, upload } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
@@ -18,6 +18,8 @@ import RoomFiles from './RoomFiles';
 import ThreadPanel from './ThreadPanel';
 import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './HistorySearch';
 import { previewText, readStorage } from './history';
+
+const NO_REACTIONS = [];
 
 export default function App() {
   const [selected, setSelected] = useState('lobby');
@@ -337,6 +339,25 @@ export default function App() {
       ...(canRemove ? [{ id: 'remove', label: '删除消息（管理员）', action: () => act('remove') }] : []),
     ], '消息操作');
   }
+  // 长会话里每次更新只重渲染有变化的消息：传给 Message 的回调保持同一引用，调用时再取最新的状态和处理函数。
+  const latest = useRef(null);
+  const recipientsCache = useRef([]);
+  const messageHandlers = useMemo(() => ({
+    onContextMenu: (event, message) => latest.current.messageMenu(event, message),
+    onReply: target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id }); },
+    nameOf: id => latest.current.userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined),
+    userOf: id => latest.current.userMap[id],
+    colorOf: id => nameColor(id, latest.current.userMap[id]),
+    onOpenQuote: (reply, message) => latest.current.jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId }),
+    onReact: (message, emoji) => latest.current.toggleReaction(message, emoji),
+    onVote: (message, options) => latest.current.votePoll(message, options),
+    onClosePoll: message => latest.current.closePoll(message),
+    onOpenThread: target => latest.current.openThread(target.id),
+    onRead: (roomId, messageId) => latest.current.markMessageRead(roomId, messageId),
+    onToggleSelect: target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id]),
+    onReadDetail: (event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(current => current?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); },
+    onOpenBundle: setOpenBundle, onPick: setReactingTo, onPreview: setPreview,
+  }), []);
   const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
   if (startupError) return <div className="startup-state"><Logo /><h2>稍等，连接有点慢</h2><p>{startupError}</p><div className="startup-actions"><button className="primary-button" onClick={start}><RefreshCw size={15} />重新连接</button>{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div></div>;
   if (!bootstrap) return <div className="startup-state"><Logo /><p>正在连接虾扯蛋…</p><LoaderCircle className="spin" size={18} /></div>;
@@ -348,6 +369,9 @@ export default function App() {
   const room = rooms.find(room => room.id === selected && !room.hidden);
   const groupMembers = !room ? [] : room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
+  latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead };
+  const recipientIds = groupMembers.filter(user => user.id !== state.me.id).map(user => user.id);
+  if (recipientIds.join() !== recipientsCache.current.join()) recipientsCache.current = recipientIds;
   const query = search.trim().toLowerCase();
   const filtered = rooms.filter(room => (!room.hidden || query) && room.name.toLowerCase().includes(query));
   const peer = room?.kind === 'direct' ? peerOf(room) : null;
@@ -461,11 +485,10 @@ export default function App() {
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
         {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const avatar = room.kind !== 'direct' && !first.recalledAt && <div className="group-avatar"><Avatar user={userOf(first)} size={32} /></div>;
-          return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message onContextMenu={messageMenu} message={message}
-          onReply={target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id }); }} nameOf={id => userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined)} userOf={id => userMap[id]}
-          onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
-          reactionOptions={state.reactions || []} onReact={toggleReaction} onVote={votePoll} onClosePoll={closePoll} onOpenThread={target => openThread(target.id)} colorOf={id => nameColor(id, userMap[id])} onOpenBundle={setOpenBundle} picking={reactingTo === message.id} onPick={setReactingTo}
-          selecting={Boolean(selection)} selected={selection?.includes(message.id)} onToggleSelect={target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id])} user={userOf(message)} grouped key={message.id} mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} />)}</div>{mine && avatar}</div></React.Fragment>; })}
+          return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users}
+          reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))}
+          user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
+          readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} recipients={recipientsCache.current} direct={room.kind === 'direct'} />)}</div>{mine && avatar}</div></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
       {selection ? <div className="selection-bar glass" role="toolbar" aria-label="多选消息">
