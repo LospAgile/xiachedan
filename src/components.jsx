@@ -3,6 +3,8 @@ import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Do
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink } from './markdown';
+import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
+import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 
 export const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
@@ -141,8 +143,16 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); };
   }, [onClose]);
-  return <div ref={ref} className={`reaction-palette ${below ? 'below' : ''}`} role="group" aria-label="选择表情">
-    {options.map(emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={chosen.includes(emoji)} className={chosen.includes(emoji) ? 'chosen' : ''} onClick={() => { onPick(emoji); onClose(); }}>{emoji}</button>)}
+  // 最常使用：本机按次数排前 8 个，不够时用默认的几个补齐；「更多」展开全部表情。
+  const [expanded, setExpanded] = useState(false);
+  const usage = readStorage('linliao.reactionUse', {});
+  const frequent = [...new Set([...Object.keys(usage).sort((a, b) => usage[b] - usage[a]), ...options])].slice(0, 8);
+  const pick = emoji => { localStorage.setItem('linliao.reactionUse', JSON.stringify({ ...usage, [emoji]: (usage[emoji] || 0) + 1 })); onPick(emoji); onClose(); };
+  const button = emoji => <button type="button" key={emoji} aria-label={`回应 ${emoji}`} aria-pressed={chosen.includes(emoji)} className={chosen.includes(emoji) ? 'chosen' : ''} onClick={() => pick(emoji)}>{emoji}</button>;
+  return <div ref={ref} className={`reaction-palette ${below ? 'below' : ''} ${expanded ? 'expanded' : ''}`} role="group" aria-label="选择表情">
+    {expanded ? <div className="reaction-all"><h4>最常使用</h4><div className="reaction-grid">{frequent.map(button)}</div>
+      {EMOJI_GROUPS.map(([name, list]) => <React.Fragment key={name}><h4>{name}</h4><div className="reaction-grid">{list.map(button)}</div></React.Fragment>)}</div>
+      : <>{frequent.map(button)}<button type="button" className="reaction-more" aria-label="更多表情" onClick={() => setExpanded(true)}><SmilePlus size={17} /></button></>}
   </div>;
 }
 

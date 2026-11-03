@@ -13,7 +13,7 @@ import { fetchPreview } from './linkPreview.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_FILE = 100 * 1024 * 1024;
-// 表情回应的固定选项，随会话状态下发给客户端。
+// 表情回应的默认常用项（客户端在本机按使用次数排序），随会话状态下发；回应本身可以用任意单个表情。
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '🙏', '✅', '👀'];
 const PRESETS = ['cat', 'bird', 'rabbit', 'fish', 'coffee', 'mountain', 'planet', 'sprout'];
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -656,12 +656,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/reactions', (req, res) => {
     rateLimit(req, 'reactions', 120);
     const { messageId, emoji } = req.body || {};
-    if (typeof messageId !== 'string' || messageId.length > 100 || !REACTIONS.includes(emoji)) throw fail('表情回应无效');
+    // 任意单个表情都可以回应（含肤色、组合表情）；同一条消息最多 20 种不同的表情。
+    const single = typeof emoji === 'string' && emoji.length <= 16 && /\p{Extended_Pictographic}/u.test(emoji) && [...new Intl.Segmenter().segment(emoji)].length === 1;
+    if (typeof messageId !== 'string' || messageId.length > 100 || !single) throw fail('表情回应无效');
     const row = stmt('SELECT * FROM messages WHERE id=?').get(messageId);
     if (!row || row.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (recalledAt(row.id)) throw fail('消息已撤回');
     const removed = stmt('DELETE FROM message_reactions WHERE message_id=? AND user_id=? AND emoji=?').run(row.id, req.user.id, emoji).changes;
+    if (!removed && !stmt('SELECT 1 FROM message_reactions WHERE message_id=? AND emoji=?').get(row.id, emoji) && stmt('SELECT COUNT(DISTINCT emoji) AS n FROM message_reactions WHERE message_id=?').get(row.id).n >= 20) throw fail('这条消息的表情种类已经很多了');
     if (!removed) stmt('INSERT INTO message_reactions VALUES (?,?,?,?)').run(row.id, req.user.id, emoji, Date.now());
     const event = { roomId: row.room_id, messageId: row.id, reactions: reactionsOf(row.id) };
     broadcast({ type: 'message-reactions', ...event }, row.room_id);

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { readStorage } from './history';
 
 // 输入区的表情面板：常用（本机最近用过的）加几组常见表情，点击插入到光标处。
-const GROUPS = [
+export const GROUPS = [
   ['笑脸', '😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😌 😍 🥰 😘 😋 😛 😜 🤪 😎 🤓 🧐 🤔 🤨 😐 😑 😶 🙄 😏 😬 🤐 😴 😪 😮 😯 😲 🥱 😢 😭 😤 😡 🤯 😳 🥵 🥶 😱 😨 😰 😓 🤗 🤭 🫡 🤫 🤥 😷 🤒 🤕 🥳 🥺 🫠'],
   ['手势', '👍 👎 👌 ✌️ 🤞 🤟 🤘 🤙 👈 👉 👆 👇 ☝️ ✋ 🤚 🖐️ 🖖 👋 🤝 🙏 👏 🙌 👐 🤲 💪 ✍️ 🫶 👀 🧠'],
   ['心情', '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 💔 ❣️ 💕 💯 💢 💥 💫 💦 💤 🔥 ✨ 🎉 🎊 🎈 🎁 🏆 🥇 ⭐ 🌟 ☀️ 🌈 ☔'],
