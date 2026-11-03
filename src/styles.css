@@ -342,10 +342,6 @@ textarea { resize: none; line-height: 20px; }
 .reaction-palette button { width: 32px; height: 32px; border-radius: 16px; font-size: 18px; line-height: 32px; }
 .reaction-palette button.chosen { background: var(--fill-3); }
 @media (hover: hover) and (pointer: fine) { .reaction-palette button:hover { background: var(--fill-2); transform: scale(1.12); } }
-.reaction-chips { display: flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }
-.reaction-chips button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px; background: var(--fill-1); box-shadow: inset 0 0 0 1px var(--edge); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-1); }
-.reaction-chips button.reacted { background: rgba(232, 120, 79, .16); box-shadow: inset 0 0 0 1px rgba(232, 120, 79, .55); }
-@media (hover: hover) and (pointer: fine) { .reaction-chips button:hover { background: var(--fill-2); } }
 .message-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px; border-radius: 10px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
 .message-quote b { font-weight: 600; color: var(--quote-color, var(--text-1)); }
 .message-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -664,8 +660,6 @@ button.message-read-status.is-read { color: var(--text-1); }
 @keyframes panel-in { from { opacity: 0; transform: translateX(12px); } }
 .quick-switcher[open] { animation: switcher-in 180ms var(--ease-out); }
 @keyframes switcher-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
-.reaction-chips button { animation: chip-in 160ms var(--ease-out); }
-@keyframes chip-in { from { opacity: 0; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
@@ -890,3 +884,28 @@ button.message-read-status.is-read { color: var(--text-1); }
 .bundle-image img { width: 100%; height: 100%; object-fit: cover; }
 .bundle-file { display: inline-flex; gap: 6px; align-items: baseline; padding: 6px 10px; border-radius: 8px; background: var(--fill-1); color: var(--text-1); text-decoration: none; font-size: 13px; }
 .bundle-file small { color: var(--text-2); }
+
+/* 表情回应：在气泡内底部，与时间同一行；自己回应过的用实心强调色 */
+.bubble-reactions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px; margin-top: 6px; }
+.has-media .bubble-reactions { padding: 2px 6px 4px; }
+.bubble-reactions .bubble-meta { float: none; top: 0; margin: 0 -3px 1px auto; padding-left: 8px; }
+.reaction-chip { --chip-bg: color-mix(in srgb, var(--accent) 13%, transparent); position: relative; display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 8px 0 6px; border-radius: 13px; background: var(--chip-bg); color: var(--accent-icon, var(--accent)); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; transition: background-color 160ms var(--ease-out), color 160ms var(--ease-out); }
+.reaction-chip.reacted { --chip-bg: var(--accent); color: #fff; }
+.mine .reaction-chip { --chip-bg: rgba(255, 255, 255, .2); color: #fff; }
+.mine .reaction-chip.reacted { --chip-bg: #fff; color: var(--accent); }
+.reaction-chip:disabled { cursor: default; }
+.reaction-chip:active:not(:disabled) { transform: scale(.94); }
+@media (hover: hover) and (pointer: fine) { .reaction-chip:hover:not(:disabled) { filter: brightness(.95); } }
+.reaction-emoji { font-size: 15px; line-height: 1; }
+.reaction-chip:has(.reaction-people) { padding-right: 4px; }
+.reaction-people { display: inline-flex; }
+.reaction-people .avatar { box-shadow: 0 0 0 1.5px var(--chip-bg); }
+.reaction-people .avatar + .avatar { margin-left: -6px; }
+.reaction-chip.popped { animation: reaction-pop 420ms cubic-bezier(.34, 1.56, .64, 1); }
+.reaction-chip.popped .reaction-emoji { animation: reaction-emoji 520ms cubic-bezier(.34, 1.56, .64, 1); }
+.reaction-burst { position: absolute; left: 14px; top: 50%; pointer-events: none; }
+.reaction-burst i { position: absolute; left: 0; top: 0; font-size: 11px; font-style: normal; opacity: 0; transform: translate(-50%, -50%); animation: reaction-particle 620ms cubic-bezier(.23, 1, .32, 1) forwards; }
+@keyframes reaction-pop { 0% { transform: scale(.7); } 60% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@keyframes reaction-emoji { 0% { transform: scale(1.7) rotate(-12deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes reaction-particle { 0% { opacity: 1; transform: translate(-50%, -50%) scale(.4); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .reaction-burst { display: none; } .reaction-chip.popped, .reaction-chip.popped .reaction-emoji { animation: none; } }

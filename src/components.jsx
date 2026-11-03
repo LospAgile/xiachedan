@@ -166,11 +166,35 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle }) {
+// 回应少时直接显示回应者头像，多了显示人数。新增回应时弹一下并迸出几颗同样的表情。
+const BURST = Array.from({ length: 7 }, (_, index) => { const angle = (index / 7) * Math.PI * 2 - Math.PI / 2; return { x: Math.cos(angle) * 26, y: Math.sin(angle) * 20 }; });
+function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
+  const reacted = item.users.includes(viewerId);
+  const count = item.users.length;
+  const previous = useRef(live ? 0 : count);
+  const [burst, setBurst] = useState(0);
+  useEffect(() => {
+    if (count > previous.current) setBurst(value => value + 1);
+    previous.current = count;
+  }, [count]);
+  useEffect(() => { if (!burst) return; const timer = setTimeout(() => setBurst(0), 700); return () => clearTimeout(timer); }, [burst]);
+  const names = item.users.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、');
+  return <button type="button" className={`reaction-chip ${reacted ? 'reacted' : ''} ${burst ? 'popped' : ''}`} aria-pressed={reacted} disabled={!onToggle}
+    title={`${names} 回应了 ${item.emoji}`} aria-label={`${item.emoji} ${count} 人：${names}`} onClick={event => { event.stopPropagation(); onToggle?.(); }}>
+    <span className="reaction-emoji" aria-hidden="true">{item.emoji}</span>
+    {count <= 3 ? <span className="reaction-people" aria-hidden="true">{item.users.map(id => <Avatar key={id} user={userOf?.(id)} size={18} />)}</span>
+      : <span aria-hidden="true">{count}</span>}
+    {burst > 0 && <span className="reaction-burst" aria-hidden="true">{BURST.map((point, index) => <i key={index} style={{ '--dx': `${point.x}px`, '--dy': `${point.y}px` }}>{item.emoji}</i>)}</span>}
+  </button>;
+}
+
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
   const press = useRef({ timer: 0, fired: false });
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
   // 只给刚收到/刚发出的消息做入场动效，翻历史时不动。
   const [fresh] = useState(() => Date.now() - message.createdAt < 4000);
   const revealSize = useRef({});
@@ -212,6 +236,12 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
     : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
   const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}</span>;
+  const reactions = message.reactions || [];
+  // 有表情回应时，回应和时间一起放在气泡底部同一行（Telegram 式）。
+  const reactionRow = reactions.length > 0 && <div className="bubble-reactions">
+    {reactions.map(item => <ReactionChip key={item.emoji} item={item} viewerId={viewerId} nameOf={nameOf} userOf={userOf} live={mounted.current}
+      onToggle={selecting ? undefined : () => onReact?.(message, item.emoji)} />)}
+    {meta}</div>;
   const lastFile = message.attachments.at(-1);
   const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
   const showName = !mine && !direct && !continued;
@@ -220,11 +250,12 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
-    {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} /><div className="bubble-meta-row">{meta}</div></> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} /><div className="bubble-meta-row">{meta}</div></>
-      : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
+    {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
+      : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} />}
     {message.text && !message.poll && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
-    {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
+    {!message.text && !reactionRow && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
+    {reactionRow}
   </>;
   // 群聊里头像放在一组连续消息的最后一条旁边（自己的在右侧），这一条带「尾巴」圆角；私聊不显示头像。
   const avatar = !grouped && !direct && (last ? <Avatar user={user} size={32} /> : <span className="avatar-spacer" />);
@@ -254,10 +285,6 @@ export function Message({ message, user, mine, continued = false, privateMode, o
       </div>}</div>
       {readNode && <div className="read-line">{readNode}</div>}
       {message.thread && !selecting && <button type="button" className="thread-link" onClick={() => onOpenThread?.(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>}
-      {message.reactions?.length > 0 && <div className="reaction-chips">{message.reactions.map(item => { const reacted = item.users.includes(viewerId);
-        const names = item.users.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、');
-        return <button type="button" key={item.emoji} className={reacted ? 'reacted' : ''} aria-pressed={reacted} title={`${names} 回应了 ${item.emoji}`} aria-label={`${item.emoji} ${item.users.length} 人：${names}`} onClick={() => onReact?.(message, item.emoji)}>
-          <span aria-hidden="true">{item.emoji}</span><span aria-hidden="true">{item.users.length}</span></button>; })}</div>}
     </div>
     {mine && avatar}
   </article>;
