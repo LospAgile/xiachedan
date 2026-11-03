@@ -413,7 +413,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .reply-copy b { font-weight: 600; }
 .reply-copy .private-preview { color: var(--text-2); }
 .reply-bar .icon-button { width: 26px; height: 26px; }
-.composer-area { position: absolute; z-index: 3; left: 24px; right: 24px; bottom: 16px; max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+/* 输入区左右边缘与消息列表的头像列对齐：窗口变宽时只拉长输入框 */
+.composer-area { position: absolute; z-index: 3; left: max(24px, calc((100% - 860px) / 2)); right: max(24px, calc((100% - 860px) / 2)); bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
 .attachment-queue { display: flex; gap: 8px; overflow-x: auto; padding: 8px; border-radius: 14px; background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-1); }
 .queued-file { display: flex; align-items: center; gap: 8px; flex: none; max-width: 240px; padding: 4px 4px 4px 4px; border-radius: 10px; background: var(--fill-1); }
 .queued-file.failed { box-shadow: inset 0 0 0 1px rgba(255, 105, 97, .55); }
@@ -552,7 +553,7 @@ button.message-read-status.is-read { color: var(--text-1); }
 .member-option { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
 .member-option input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .member-option:has(input:focus-visible) { outline: 2px solid var(--accent-bright); outline-offset: -2px; }
-.member-option > span:not(.selection-check):not(.avatar) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
+.member-option > span:not(.selection-check):not(.avatar):not(.room-avatar) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 500; }
 .member-option small { font-size: 11px; color: var(--text-2); font-weight: 400; }
 .selection-check { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-3); color: #fff; }
 .selection-check.checked { background: var(--accent-bright); box-shadow: none; }
@@ -645,7 +646,7 @@ button.message-read-status.is-read { color: var(--text-1); }
   .back-button { display: inline-flex; }
   .toolbar-subtitle, .toolbar-button kbd { display: none; }
   .message-scroll { padding-left: 12px; padding-right: 12px; }
-  .composer-area { left: 8px; right: 8px; bottom: 8px; }
+  .composer-area { left: 12px; right: 12px; bottom: 8px; }
   .jump-to-latest { bottom: 72px; }
   .members-panel { position: absolute; inset: 8px; width: auto; margin: 0; }
   .message-column { max-width: 85%; }
@@ -836,3 +837,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .muted-notice { margin: 0 16px 14px; padding: 12px 16px; border-radius: 16px; text-align: center; color: var(--text-2); font-size: 13px; }
 .retention-row { justify-content: space-between; margin-top: 10px; }
 .retention-row select { width: auto; min-height: 30px; padding: 0 8px; border-radius: 8px; border: 0; background: var(--fill-1); color: var(--text-1); }
+.member-option .room-avatar { width: 32px; height: 32px; border-radius: 50%; }
+/* 已读状态在气泡下方 */
+.read-line { display: flex; justify-content: flex-end; margin-top: 2px; padding-right: 4px; font-size: 11px; line-height: 15px; color: var(--text-2); }
+
+/* 同一个人的一组消息共用一个头像：头像贴住可视区底部（列表底部留白 104px，所以用负值让它停在输入框上方），长消息或多条消息滚动时跟着走（Telegram 式） */
+.message-group { display: flex; align-items: stretch; gap: 8px; margin-top: 10px; }
+.group-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.group-rows > :first-child { margin-top: 0; }
+.group-avatar { flex: none; width: 32px; display: flex; flex-direction: column; justify-content: flex-end; }
+.group-avatar .avatar { position: sticky; bottom: -34px; }
+@media (max-width: 760px) { .group-avatar .avatar { bottom: -42px; } }

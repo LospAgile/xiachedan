@@ -143,7 +143,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -188,7 +188,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const readNode = mine && recipients.length > 0 && Array.isArray(message.readBy) && (direct
     ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
     : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
-  const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}{readNode}</span>;
+  const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}</span>;
   const lastFile = message.attachments.at(-1);
   const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
   const showName = !mine && !direct && !continued;
@@ -204,7 +204,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
   </>;
   // 群聊里头像放在一组连续消息的最后一条旁边（自己的在右侧），这一条带「尾巴」圆角；私聊不显示头像。
-  const avatar = !direct && (last ? <Avatar user={user} size={32} /> : <span className="avatar-spacer" />);
+  const avatar = !grouped && !direct && (last ? <Avatar user={user} size={32} /> : <span className="avatar-spacer" />);
   const rowClass = `message-row ${mine ? 'mine' : ''} ${continued ? 'continued' : ''} ${last ? 'last' : ''} ${fresh ? 'fresh' : ''}`;
   // 多选时整行可点：点哪里都只切换选中，不触发菜单。
   if (selecting) return <article className={`${rowClass} selecting ${selected ? 'selected' : ''}`} data-message-id={message.id} data-seq={message.seq}
@@ -229,6 +229,7 @@ export function Message({ message, user, mine, continued = false, privateMode, o
         <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
         {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
       </div>}</div>
+      {readNode && <div className="read-line">{readNode}</div>}
       {message.thread && !selecting && <button type="button" className="thread-link" onClick={() => onOpenThread?.(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>}
       {message.reactions?.length > 0 && <div className="reaction-chips">{message.reactions.map(item => { const reacted = item.users.includes(viewerId);
         const names = item.users.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、');
