@@ -4,6 +4,7 @@ import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
+import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
@@ -11,6 +12,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
+  const [slash, setSlash] = useState(null);
   const [drafts, setDrafts] = useState({});
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -30,6 +32,33 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   function detectMention(node) {
     const match = (members.length || canMentionAll) && node.selectionStart === node.selectionEnd && node.value.slice(0, node.selectionStart).match(/@([^\s@]{0,24})$/);
     setPicker(match ? { start: node.selectionStart - match[1].length - 1, query: match[1], index: 0 } : null);
+  }
+  // 行首或空格后输入「/」弹出格式菜单，「/」后的文字用来筛选（中文名、英文或拼音首字母）。
+  const POLL = { id: 'poll', label: '投票', sample: '', keys: 'poll vote toupiao tp' };
+  const slashOptions = slash ? [...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : [])] : [];
+  function detectSlash(node) {
+    const match = node.selectionStart === node.selectionEnd && node.value.slice(0, node.selectionStart).match(/(?:^|\s)\/([^\s/]{0,12})$/);
+    setSlash(match ? { start: node.selectionStart - match[1].length - 1, query: match[1], index: 0 } : null);
+  }
+  // 改写正文后要放的光标位置：等新内容提交到输入框后再设置，否则会被挪到末尾。
+  const pendingSelection = useRef(null);
+  useLayoutEffect(() => {
+    const node = textarea.current, selection = pendingSelection.current;
+    if (!node || !selection) return;
+    pendingSelection.current = null;
+    node.focus({ preventScroll: true });
+    node.setSelectionRange(...selection);
+  });
+  function setText(next, selection) {
+    pendingSelection.current = selection;
+    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
+  }
+  function chooseFormat(item) {
+    const current = editing ? editText : draft.text, start = slash.start, end = start + 1 + slash.query.length;
+    setSlash(null);
+    if (item.id === 'poll') { setText(current.slice(0, start) + current.slice(end), [start, start]); onCreatePoll(); return; }
+    const result = applyFormat(current, start, end, item);
+    setText(result.text, result.selection);
   }
   function chooseMention(user) {
     const insert = `@${user.name} `, start = picker.start;
@@ -79,13 +108,19 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   }
   // ⌘B 粗体、⌘I 斜体、⌘E 代码、⌘⇧X 删除线（Windows 用 Ctrl）：给选中的文字加上格式符号。
   function wrapSelection(event) {
+    // Cmd/Ctrl+K：把选中的文字做成链接，选中网址部分方便直接粘贴。
+    if (event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      const node = event.currentTarget, { selectionStart: start, selectionEnd: end, value } = node;
+      const label = value.slice(start, end) || '文字', next = value.slice(0, start) + `[${label}](https://)` + value.slice(end);
+      setText(next, [start + label.length + 3, start + label.length + 11]);
+      return true;
+    }
     const mark = { b: '**', i: '*', e: '`', x: event.shiftKey ? '~~' : null }[event.key.toLowerCase()];
     if (!mark || !(event.metaKey || event.ctrlKey) || event.altKey || (event.shiftKey && mark !== '~~')) return false;
     event.preventDefault();
     const node = event.currentTarget, { selectionStart: start, selectionEnd: end, value } = node;
-    const next = value.slice(0, start) + mark + value.slice(start, end) + mark + value.slice(end);
-    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
-    requestAnimationFrame(() => node.setSelectionRange(start + mark.length, end + mark.length));
+    setText(value.slice(0, start) + mark + value.slice(start, end) + mark + value.slice(end), [start + mark.length, end + mark.length]);
     return true;
   }
   // 在光标处插入表情，编辑和普通输入都适用。
@@ -138,8 +173,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     setEditText(editing.text);
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
-  useEffect(() => setPicker(null), [room.id]);
+  useEffect(() => { setPicker(null); setSlash(null); }, [room.id]);
   return <div className="composer-area">
+    {slashOptions.length > 0 && <div className="mention-picker slash-picker" role="listbox" id="slash-picker" aria-label="插入格式">
+      {slashOptions.map((item, index) => <button type="button" role="option" id={`slash-option-${index}`} key={item.id} aria-selected={index === slash.index} className={index === slash.index ? 'active' : ''}
+        onPointerDown={event => { event.preventDefault(); chooseFormat(item); }}><span>{item.label}</span>{item.sample && <code>{item.sample}</code>}</button>)}
+    </div>}
     {picker && candidates.length > 0 && <div className="mention-picker" role="listbox" id="mention-picker" aria-label="选择要提及的成员">
       {candidates.map((user, index) => <button type="button" role="option" id={`mention-option-${index}`} key={user.id} aria-selected={index === picker.index} className={index === picker.index ? 'active' : ''}
         onPointerDown={event => { event.preventDefault(); chooseMention(user); }}>
@@ -169,15 +208,22 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
       <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
-        aria-autocomplete="list" aria-controls="mention-picker" aria-expanded={Boolean(picker && candidates.length)} aria-activedescendant={picker && candidates.length ? `mention-option-${picker.index}` : undefined}
+        aria-autocomplete="list" aria-controls={slashOptions.length ? 'slash-picker' : 'mention-picker'} aria-expanded={Boolean(slashOptions.length || (picker && candidates.length))}
+        aria-activedescendant={slashOptions.length ? `slash-option-${slash.index}` : picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {
+          detectSlash(event.target);
           if (editing) { setEditText(event.target.value); return; }
           update(room.id, state => ({ ...state, text: event.target.value })); detectMention(event.target);
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
-        }} onSelect={event => detectMention(event.currentTarget)} onBlur={() => setPicker(null)}
+        }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); }}
         onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
         onKeyDown={event => {
+          if (slashOptions.length && !event.nativeEvent.isComposing) {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : slashOptions.length - 1; setSlash(value => ({ ...value, index: (value.index + step) % slashOptions.length })); return; }
+            if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseFormat(slashOptions[slash.index]); return; }
+            if (event.key === 'Escape') { event.preventDefault(); setSlash(null); return; }
+          }
           if (picker && candidates.length && !event.nativeEvent.isComposing) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : candidates.length - 1; setPicker(value => ({ ...value, index: (value.index + step) % candidates.length })); return; }
             if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); chooseMention(candidates[picker.index]); return; }
@@ -188,11 +234,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
           if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); send(); }
+          // 在没闭合的 ``` 代码块里回车是换行；闭合后回车照常发送。
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)) { event.preventDefault(); send(); }
         }} />
       <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 支持 **粗体** `代码` 等简单格式'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 输入 / 插入格式，支持 Markdown'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>

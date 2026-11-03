@@ -709,15 +709,9 @@ button.message-read-status.is-read { color: var(--text-1); }
 .edited-mark { margin-right: 4px; }
 
 /* 消息简单格式 */
-.message-text p { margin: 0; }
-.message-text p + *, .message-text pre + *, .message-text blockquote + *, .message-text ul + *, .message-text ol + * { margin-top: 6px; }
 .message-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
 .message-text code { padding: 0 4px; border-radius: 4px; background: var(--fill-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
-.message-text pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--fill-2); overflow-x: auto; white-space: pre; }
-.message-text pre code { padding: 0; background: none; font-size: 12.5px; line-height: 18px; }
 .message-text blockquote { margin: 0; padding: 0 0 0 9px; border-left: 3px solid currentColor; opacity: .85; }
-.message-text ul, .message-text ol { margin: 0; padding-left: 20px; white-space: normal; }
-.mine .message-text code, .mine .message-text pre { background: rgba(0, 0, 0, .18); }
 .device-list { display: flex; flex-direction: column; margin: 8px 0; padding: 0; list-style: none; }
 .device-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .device-list li span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -922,3 +916,59 @@ button.message-read-status.is-read { color: var(--text-1); }
 .outbox-status { align-items: center; gap: 4px; }
 .outbox-message.has-error .outbox-status { color: var(--danger-text); }
 .outbox-status button { margin-left: 6px; color: var(--accent-icon, var(--accent)); font-size: 11px; font-weight: 600; }
+
+/* 消息里的 Markdown：标题、列表、表格、分隔线、待办、代码块 */
+.message-text.markdown { white-space: normal; }
+.markdown :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote, hr, .table-scroll, .code-block) { margin: 0; }
+.markdown > * + *, .markdown li > * + *, .markdown blockquote > * + * { margin-top: 6px; }
+.markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 650; line-height: 1.35; }
+.markdown h1 { font-size: 1.3em; }
+.markdown h2 { font-size: 1.18em; }
+.markdown h3 { font-size: 1.08em; }
+.markdown :is(h4, h5, h6) { font-size: 1em; }
+.markdown ul, .markdown ol { padding-left: 20px; }
+.markdown li + li { margin-top: 2px; }
+.markdown .contains-task-list { padding-left: 2px; list-style: none; }
+.markdown .task-list-item input { width: auto; margin: 0 6px 0 0; padding: 0; border: 0; vertical-align: -1px; accent-color: var(--accent); }
+.markdown hr { height: 1px; border: 0; color: inherit; background: currentColor; opacity: .25; }
+.markdown .table-scroll { max-width: 100%; overflow-x: auto; }
+.markdown table { border-collapse: collapse; font-size: .92em; }
+.markdown :is(th, td) { padding: 4px 10px; border: 1px solid var(--edge); text-align: left; vertical-align: top; }
+.markdown th { font-weight: 600; background: var(--fill-1); }
+.mine .markdown :is(th, td) { border-color: rgba(255, 255, 255, .3); }
+.mine .markdown th { background: rgba(255, 255, 255, .12); }
+.markdown blockquote { padding-left: 9px; border-left: 3px solid currentColor; opacity: .85; }
+.mine .message-text code { background: rgba(0, 0, 0, .18); }
+.code-block { --code-bg: #1f2023; --code-fg: #e6e6e6; --code-muted: #9a9aa0; max-width: 100%; border-radius: 10px; background: var(--code-bg); color: var(--code-fg); overflow: hidden; }
+:root[data-theme="light"] .code-block { --code-bg: #f4f4f6; --code-fg: #24292f; --code-muted: #6e7781; }
+.code-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 0; font-size: 11px; color: var(--code-muted); }
+.code-head button { color: var(--code-muted); font-size: 11px; }
+@media (hover: hover) and (pointer: fine) { .code-head button:hover { color: var(--code-fg); } }
+.code-block pre { margin: 0; padding: 6px 10px 9px; overflow-x: auto; white-space: pre; }
+.code-block pre code, .mine .code-block pre code { display: block; padding: 0; background: none; color: inherit; font-size: 12.5px; line-height: 18px; }
+/* 代码高亮配色（深浅主题各一套） */
+.hljs-comment, .hljs-quote { color: #8b949e; font-style: normal; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: #ff7b72; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-tag { color: #a5d6ff; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable.constant_ { color: #79c0ff; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: #d2a8ff; }
+.hljs-built_in, .hljs-type, .hljs-title.class_ { color: #ffa657; }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-selector-class, .hljs-selector-id { color: #79c0ff; }
+.hljs-meta, .hljs-name, .hljs-tag { color: #7ee787; }
+.hljs-deletion { color: #ffa198; }
+:root[data-theme="light"] .hljs-comment, :root[data-theme="light"] .hljs-quote { color: #6e7781; }
+:root[data-theme="light"] :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag) { color: #cf222e; }
+:root[data-theme="light"] :is(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-tag) { color: #0a3069; }
+:root[data-theme="light"] :is(.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-attr, .hljs-attribute, .hljs-property, .hljs-selector-class, .hljs-selector-id) { color: #0550ae; }
+:root[data-theme="light"] :is(.hljs-title, .hljs-section) { color: #8250df; }
+:root[data-theme="light"] :is(.hljs-built_in, .hljs-type) { color: #953800; }
+:root[data-theme="light"] :is(.hljs-meta, .hljs-name, .hljs-tag) { color: #116329; }
+:root[data-theme="light"] .hljs-deletion { color: #82071e; }
+.hljs-emphasis { font-style: normal; }
+.hljs-strong { font-weight: 600; }
+
+/* 「/」格式菜单 */
+.slash-picker { align-self: flex-start; width: 240px; max-height: 300px; margin-left: 54px; }
+.slash-picker button { justify-content: space-between; }
+.slash-picker code { flex: none; padding: 0 5px; border-radius: 5px; background: var(--fill-2); color: var(--text-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.slash-picker button.active code { background: rgba(255, 255, 255, .2); color: #fff; }
