@@ -4,6 +4,7 @@ import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
 import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
+import { disintegrate } from './dust';
 import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 
@@ -194,6 +195,9 @@ export function Message({ message, user, mine, continued = false, privateMode, o
   const bubble = useRef(null);
   const press = useRef({ timer: 0, fired: false });
   const mounted = useRef(false);
+  // 刚被撤回的那一刻气泡还在页面上，趁换成提示行之前让它粉碎。
+  const recalledBefore = useRef(Boolean(message.recalledAt));
+  if (message.recalledAt && !recalledBefore.current) { recalledBefore.current = true; disintegrate(bubble.current); }
   useEffect(() => { mounted.current = true; }, []);
   // 只给刚收到/刚发出的消息做入场动效，翻历史时不动。
   const [fresh] = useState(() => Date.now() - message.createdAt < 4000);
