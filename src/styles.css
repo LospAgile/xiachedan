@@ -909,3 +909,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 @keyframes reaction-emoji { 0% { transform: scale(1.7) rotate(-12deg); } 100% { transform: scale(1) rotate(0); } }
 @keyframes reaction-particle { 0% { opacity: 1; transform: translate(-50%, -50%) scale(.4); } 100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1); } }
 @media (prefers-reduced-motion: reduce) { .reaction-burst { display: none; } .reaction-chip.popped, .reaction-chip.popped .reaction-emoji { animation: none; } }
+
+/* 拖动中的置顶会话浮起一层 */
+.conversation.dragging { box-shadow: var(--shadow-2); cursor: grabbing; }
+.conversation.dragging:not(.active) { background: var(--glass-solid); }
+.conversation.dragging::after { display: none; }
