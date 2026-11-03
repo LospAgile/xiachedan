@@ -190,10 +190,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (groupSettings(room).ownerId !== userId) throw fail('只有群主可以这样设置', 403);
     return room;
   };
+  const roomAvatar = id => { const row = stmt('SELECT upload_id FROM room_avatars WHERE room_id=?').get(id); return row ? `upload:${row.upload_id}` : null; };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
-      ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+      avatar: roomAvatar(room.id), ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
     const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
@@ -1097,6 +1098,30 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
+  // 群头像：群主（大厅为空间管理者）才能换；旧图片随后清理。
+  const requireRoomAvatarOwner = req => {
+    const room = requireRoom(req.query.roomId ?? req.body?.roomId, req.user.id);
+    const allowed = room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : room.kind === 'public' && isManager(req.user);
+    if (!allowed) throw fail(room.kind === 'direct' ? '私聊没有群头像' : '只有群主可以更换群头像', 403);
+    return room;
+  };
+  const setRoomAvatar = (room, uploadId) => {
+    const previous = stmt('SELECT upload_id FROM room_avatars WHERE room_id=?').get(room.id);
+    if (previous) { stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(previous.upload_id); stmt('DELETE FROM uploads WHERE id=?').run(previous.upload_id); }
+    if (uploadId) stmt('INSERT OR REPLACE INTO room_avatars VALUES (?,?)').run(room.id, uploadId);
+    else stmt('DELETE FROM room_avatars WHERE room_id=?').run(room.id);
+    cleanFiles();
+    broadcast({ type: 'rooms' }, room.id);
+  };
+  const saveRoomAvatar = (req, file) => {
+    const room = requireRoomAvatarOwner(req);
+    const mime = detectMime(file.path);
+    if (!mime?.startsWith('image/') || file.size > 5 * 1024 * 1024) throw fail('群头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
+    stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(file.filename, req.user.id, room.id, 'room-avatar', mime, file.size, 'room-avatar', 1, Date.now());
+    setRoomAvatar(room, file.filename);
+    return `upload:${file.filename}`;
+  };
+  app.post('/api/room-avatar/remove', (req, res) => { setRoomAvatar(requireRoomAvatarOwner(req), null); res.json({ ok: true }); });
   // 缩略图只能挂在自己刚上传、还没发送的图片上，本身也必须是 2 MB 以内的静态图片。
   const thumbnailTarget = req => {
     const target = typeof req.query.thumbnailFor === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.thumbnailFor);
@@ -1117,6 +1142,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'upload', 30);
     // 授权发生在接收文件之前，防止向无权限会话写入磁盘。
     if (req.query.purpose !== 'avatar') requireRoom(req.query.roomId, req.user.id);
+    if (req.query.purpose === 'room-avatar') requireRoomAvatarOwner(req);
     if (req.query.thumbnailFor !== undefined) thumbnailTarget(req);
     // 每人存储上限（CHAT_MAX_USER_BYTES，可选）：超出后不能再上传，删除或清理后恢复。
     const userQuota = Number(process.env.CHAT_MAX_USER_BYTES || 0);
@@ -1138,6 +1164,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       if (isRemoved(req.user.id) || (cloud && !auth.user(req))) throw fail('账号已失效，请重新登录', 401);
       const isAvatar = req.query.purpose === 'avatar';
       if (req.query.thumbnailFor !== undefined) return res.status(201).json({ thumbnail: saveThumbnail(req, file) });
+      if (req.query.purpose === 'room-avatar') return res.status(201).json({ avatar: saveRoomAvatar(req, file) });
       // 能识别为图片或视频的才在页面内预览，其余一律作为普通文件，只允许下载。
       const mime = detectMime(file.path) || (isAvatar ? null : 'application/octet-stream');
       if (!mime || (isAvatar && (!mime.startsWith('image/') || file.size > 5 * 1024 * 1024))) throw fail('头像请使用 5 MB 以内的 JPG、PNG、GIF 或 WebP 图片');
@@ -1215,7 +1242,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.get('/api/media', (req, res) => {
     const file = typeof req.query.id === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.id);
     if (!file) throw fail('文件不存在', 404);
-    if (file.purpose === 'message' || file.purpose === 'thumbnail') {
+    if (file.purpose === 'message' || file.purpose === 'thumbnail' || file.purpose === 'room-avatar') {
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);
     }

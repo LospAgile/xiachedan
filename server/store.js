@@ -70,6 +70,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS member_mutes (user_id TEXT PRIMARY KEY, until INTEGER, muted_by TEXT NOT NULL, muted_at INTEGER NOT NULL);
     -- 空间设置：retention_days 消息保留天数，0 表示永久保留。
     CREATE TABLE IF NOT EXISTS space_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    -- 群头像：群主（大厅由空间管理者）上传的图片；没有时客户端显示默认图标。
+    CREATE TABLE IF NOT EXISTS room_avatars (room_id TEXT PRIMARY KEY, upload_id TEXT NOT NULL);
     -- 名字颜色：每人在 7 种昵称色里自选一种（编号 0–6），没选时按身份自动分配。
     CREATE TABLE IF NOT EXISTS user_name_colors (user_id TEXT PRIMARY KEY, color INTEGER NOT NULL);
     -- 话题：话题里的回复属于同一会话，但不出现在主时间线，也不计入会话未读；根消息上显示回复数。

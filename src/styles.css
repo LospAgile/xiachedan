@@ -865,3 +865,5 @@ button.message-read-status.is-read { color: var(--text-1); }
 .name-color-auto.active { box-shadow: 0 0 0 2px var(--accent-icon); color: var(--text-1); }
 .name-color-preview { margin-left: 4px; font-size: 14px; }
 .message-row:not(.mine) .message-quote[style] { background: color-mix(in srgb, var(--quote-color) 12%, transparent); }
+.room-avatar-edit { display: flex; align-items: center; gap: 10px; margin: 0 6px 8px; padding: 8px; border-radius: 10px; background: var(--fill-1); }
+.room-avatar-edit .secondary-button { min-height: 30px; padding: 0 12px; font-size: 12px; cursor: pointer; }
