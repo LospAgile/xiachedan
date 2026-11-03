@@ -837,6 +837,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   app.get('/api/messages', (req, res) => {
     const room = requireRoom(req.query.roomId, req.user.id);
+    // 断线重连后从本地最后一条往后补齐，每页最多 200 条。
+    if (req.query.after !== undefined) {
+      const after = Math.max(0, Number(req.query.after) || 0);
+      const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} ORDER BY seq LIMIT 201`).all(room.id, after);
+      return res.json({ messages: withReads(rows.slice(0, 200).map(serializeMessage)), hasNewer: rows.length > 200 });
+    }
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });

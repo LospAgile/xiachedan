@@ -160,12 +160,23 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       try {
         await refresh();
         const roomId = activeRoom.current;
+        // 其他会话的缓存可能缺了断线期间的消息，丢掉后切过去时重新加载，避免中间出现空洞。
+        setMessages(previous => roomId && previous[roomId] ? { [roomId]: previous[roomId] } : {});
+        setHasMore(previous => roomId && roomId in previous ? { [roomId]: previous[roomId] } : {});
         if (!roomId) return;
-        const result = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
-        if (!cancelled) {
-          setMessages(previous => ({ ...previous, [roomId]: merge(previous[roomId] || [], result.messages, historyRef.current) }));
-          setHasMore(previous => ({ ...previous, [roomId]: result.hasMore }));
+        // 当前会话从本地最后一条往后补齐；断开太久（超过 1000 条）就直接换成最新一页。
+        let after = messagesRef.current[roomId]?.at(-1)?.seq, missed = [], complete = after !== undefined;
+        for (let page = 0; complete && page < 5; page++) {
+          const result = await api(`messages?roomId=${encodeURIComponent(roomId)}&after=${after}`);
+          missed.push(...result.messages);
+          if (!result.hasNewer) break;
+          after = result.messages.at(-1).seq;
+          if (page === 4) complete = false;
         }
+        const latest = await api(`messages?roomId=${encodeURIComponent(roomId)}`);
+        if (cancelled) return;
+        setMessages(previous => ({ ...previous, [roomId]: complete ? merge(merge(previous[roomId] || [], missed, historyRef.current), latest.messages, historyRef.current) : merge([], latest.messages, historyRef.current) }));
+        setHasMore(previous => ({ ...previous, [roomId]: complete && roomId in previous ? previous[roomId] : latest.hasMore }));
       } catch (error) { if (!cancelled) notify(error.message); }
     }
     function connect() {
