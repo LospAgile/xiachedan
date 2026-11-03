@@ -4,6 +4,7 @@ import { api, upload, formatSize, absoluteUrl } from './api';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
+import { ACCENTS, FONT_SIZES } from './appearance';
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
@@ -140,10 +141,18 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged }) {
+export function ConnectionDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance }) {
   const cloud = workspace.mode === 'cloud';
   return <Modal title="设置" subtitle={cloud ? undefined : '所有聊天都通过局域网连接。'} onClose={onClose}>
-    <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div></section>
+    <section className="appearance-settings"><h3>外观</h3><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div>
+      {appearance && <>
+        <div className="accent-row" role="radiogroup" aria-label="主题色">{ACCENTS.map(([label, value]) => <button type="button" key={label} role="radio" aria-checked={appearance.accent === value} aria-label={`${label}色`} title={`${label}色`}
+          className={`accent-swatch ${appearance.accent === value ? 'active' : ''}`} style={{ background: value || '#d9653f' }} onClick={() => onAppearance({ ...appearance, accent: value })} />)}
+          <label className={`accent-swatch custom ${appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? 'active' : ''}`} title="自定义颜色" style={{ background: appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? appearance.accent : undefined }}>
+            <input type="color" aria-label="自定义主题色" value={appearance.accent || '#d9653f'} onChange={event => onAppearance({ ...appearance, accent: event.target.value })} /></label></div>
+        <div className="segmented-control font-size-control" role="radiogroup" aria-label="消息字号">{FONT_SIZES.map(([label, size]) => <button type="button" key={size} role="radio" aria-checked={appearance.fontSize === size} className={appearance.fontSize === size ? 'active' : ''} onClick={() => onAppearance({ ...appearance, fontSize: size })}>{label}</button>)}</div>
+      </>}
+    </section>
     <div className="connection-card"><Wifi size={22} /><div><b>{connected ? '已连接到聊天空间' : '正在尝试重新连接'}</b><span>{location.origin}</span></div><i className={connected ? 'online' : ''} /></div>
     {!cloud && <p className="inline-note">消息和附件保存在创建空间的电脑上。隐私模式用于遮挡屏幕内容；局域网传输使用 HTTP，请在可信网络内使用。</p>}
     <section className="account-settings"><h3>账号</h3><p>{cloud ? me.phone || me.email : me.name}</p><div className="account-actions">{cloud && <button className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}<button className="secondary-button" disabled={loggingOut} onClick={onLogout}><LogOut size={15} />{loggingOut ? '正在退出…' : '退出登录'}</button></div></section>
