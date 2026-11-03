@@ -114,7 +114,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const participants = stmt(`SELECT DISTINCT m.sender_id AS id FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? ORDER BY m.seq DESC LIMIT 3`).all(id).map(item => item.id);
     return { count: row.count, lastAt: row.lastAt, participants };
   };
-  const serializeMessage = row => row ? { ...baseMessage(row), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const bundleOf = id => { const row = stmt('SELECT title, items FROM message_bundles WHERE message_id=?').get(id); return row ? { title: row.title, items: JSON.parse(row.items) } : null; };
+  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -435,10 +436,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM room_pins WHERE message_id=?').run(id);
         stmt('DELETE FROM polls WHERE message_id=?').run(id);
         stmt('DELETE FROM poll_votes WHERE message_id=?').run(id);
-        for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
+        const bundled = JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(id)?.items || '[]').flatMap(item => item.attachments);
+        for (const file of [...JSON.parse(row.attachments), ...bundled]) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
         }
+        stmt('DELETE FROM message_bundles WHERE message_id=?').run(id);
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
@@ -554,7 +557,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -619,27 +622,48 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
     if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
     for (const row of rows) requireRoom(row.room_id, req.user.id);
-    const files = rows.flatMap(row => JSON.parse(row.attachments));
+    const bundleFiles = row => JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments);
+    const files = rows.flatMap(row => [...JSON.parse(row.attachments), ...(req.body.merge === true ? [] : bundleFiles(row))]);
     if (cloud && files.length) {
       const used = stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n;
       if (used + files.reduce((sum, file) => sum + file.size, 0) > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
     }
     const created = [], copied = [];
+    // 附件为目标会话另建一份（同一文件用硬链接，失败时复制）。
+    const copyFile = file => {
+      const id = randomUUID();
+      try { linkSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); }
+      copied.push(id);
+      stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.user.id, target.id, file.name, file.mime, file.size, 'message', 1, Date.now());
+      const { thumbId, ...rest } = file;
+      return { ...rest, id };
+    };
+    const copyBundle = bundle => bundle && { title: bundle.title, items: bundle.items.map(item => ({ ...item, attachments: item.attachments.map(copyFile) })) };
+    const names = new Map(stmt('SELECT id, name FROM users').all().map(user => [user.id, user.name]));
     db.exec('BEGIN');
     try {
-      for (const row of rows) {
-        const attachments = JSON.parse(row.attachments).map(file => {
-          const id = randomUUID();
-          try { linkSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, file.id), path.join(uploadDir, id)); }
-          copied.push(id);
-          stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.user.id, target.id, file.name, file.mime, file.size, 'message', 1, Date.now());
-          const { thumbId, ...rest } = file;
-          return { ...rest, id };
+      if (req.body.merge === true) {
+        // 合并转发：多条消息打包成一条「聊天记录」，标题按来源会话生成。
+        const sources = [...new Set(rows.map(row => row.room_id))].map(id => stmt('SELECT * FROM rooms WHERE id=?').get(id));
+        const source = sources.length === 1 ? sources[0] : null;
+        const title = !source ? '聊天记录' : source.kind === 'direct' ? `${JSON.parse(source.members).sort((a, b) => (b === req.user.id) - (a === req.user.id)).map(id => names.get(id) || '成员').join(' 和 ')} 的聊天记录` : `「${source.name}」的聊天记录`;
+        const items = rows.map(row => {
+          const bundle = stmt('SELECT * FROM message_bundles WHERE message_id=?').get(row.id);
+          return { senderId: row.sender_id, senderName: botOf(row.id) || names.get(row.sender_id) || '成员', createdAt: row.created_at,
+            text: bundle ? `[聊天记录] ${bundle.title}` : row.text, attachments: JSON.parse(row.attachments).map(copyFile) };
         });
+        const id = randomUUID();
+        stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, target.id, req.user.id, title, '[]', `bundle:${randomUUID()}`, Date.now());
+        stmt('INSERT INTO message_bundles VALUES (?,?,?)').run(id, title, JSON.stringify(items));
+        created.push(id);
+      } else for (const row of rows) {
+        const attachments = JSON.parse(row.attachments).map(copyFile);
         const id = randomUUID();
         stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, target.id, req.user.id, row.text, JSON.stringify(attachments), `forward:${randomUUID()}`, Date.now());
         const original = stmt('SELECT original_sender, original_created_at FROM message_forwards WHERE message_id=?').get(row.id);
         stmt('INSERT INTO message_forwards VALUES (?,?,?)').run(id, original?.original_sender || row.sender_id, original?.original_created_at || row.created_at);
+        const bundle = stmt('SELECT * FROM message_bundles WHERE message_id=?').get(row.id);
+        if (bundle) { const copy = copyBundle({ title: bundle.title, items: JSON.parse(bundle.items) }); stmt('INSERT INTO message_bundles VALUES (?,?,?)').run(id, copy.title, JSON.stringify(copy.items)); }
         created.push(id);
       }
       db.exec('COMMIT');
@@ -863,12 +887,13 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_reads', 'message_recalls', 'message_replies', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
   const purgeExpired = () => {
     const days = retentionDays();
     if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
     retentionCheckedAt = Date.now();
-    const rows = stmt('SELECT id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000);
+    const rows = stmt('SELECT id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000)
+      .map(row => ({ ...row, attachments: JSON.stringify([...JSON.parse(row.attachments), ...JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments)]) }));
     if (!rows.length) return 0;
     db.exec('BEGIN');
     try {
@@ -1048,7 +1073,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       else {
         const quote = message.replyTo;
         if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
-        if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
+        if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
+        else if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
         else if (message.text) lines.push(message.text);
         for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
       }

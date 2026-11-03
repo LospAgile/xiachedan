@@ -5,7 +5,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog } from './dialogs';
+import { ProfileDialog, InviteDialog, GroupDialog, ConnectionDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -39,6 +39,7 @@ export default function App() {
   // 打开着的话题（根消息标识），显示在右侧面板。
   const [threadRoot, setThreadRoot] = useState(null);
   const [mutingUser, setMutingUser] = useState(null);
+  const [openBundle, setOpenBundle] = useState(null);
   const [reminding, setReminding] = useState(null);
   const [reactingTo, setReactingTo] = useState(null);
   const [selection, setSelection] = useState(null);
@@ -225,8 +226,8 @@ export default function App() {
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
   }
-  async function forwardTo(target) {
-    const result = await api('forward', { roomId: target.id, messageIds: forwarding });
+  async function forwardTo(target, merge = false) {
+    const result = await api('forward', { roomId: target.id, messageIds: forwarding, merge });
     setSelection(null);
     if (target.id === selected) for (const message of result.messages) receive(message);
     notify(`已转发到「${target.name}」`);
@@ -463,7 +464,7 @@ export default function App() {
           return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message onContextMenu={messageMenu} message={message}
           onReply={target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id }); }} nameOf={id => userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined)}
           onOpenQuote={reply => jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId })}
-          reactionOptions={state.reactions || []} onReact={toggleReaction} onVote={votePoll} onClosePoll={closePoll} onOpenThread={target => openThread(target.id)} colorOf={id => nameColor(id, userMap[id])} picking={reactingTo === message.id} onPick={setReactingTo}
+          reactionOptions={state.reactions || []} onReact={toggleReaction} onVote={votePoll} onClosePoll={closePoll} onOpenThread={target => openThread(target.id)} colorOf={id => nameColor(id, userMap[id])} onOpenBundle={setOpenBundle} picking={reactingTo === message.id} onPick={setReactingTo}
           selecting={Boolean(selection)} selected={selection?.includes(message.id)} onToggleSelect={target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id])} user={userOf(message)} grouped key={message.id} mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} onPreview={setPreview} viewerId={state.me.id} readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} onRead={markMessageRead} recipients={groupMembers.filter(user => user.id !== state.me.id).map(user => user.id)} direct={room.kind === 'direct'} onReadDetail={(event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(readDetail?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); }} />)}</div>{mine && avatar}</div></React.Fragment>; })}
       </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
@@ -521,6 +522,7 @@ export default function App() {
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
     {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}
+    {openBundle && <BundleDialog message={openBundle} privateMode={privateMode} onPreview={file => { setOpenBundle(null); setPreview(file); }} onClose={() => setOpenBundle(null)} />}
     {mutingUser && <MuteDialog user={mutingUser} onClose={() => setMutingUser(null)} onDone={() => notify(`已禁言「${mutingUser.name}」`)} />}
     {scheduleText !== null && room && <ScheduleDialog room={room} initialText={scheduleText} onClose={() => setScheduleText(null)} onScheduled={when => { notify(`将在 ${when} 发送`); loadScheduled(room.id); }} />}
     {modal === 'scheduled' && <ScheduledListDialog items={scheduled.items} onClose={() => setModal(null)} onCancel={async item => { try { await api('scheduled/cancel', { id: item.id }); await loadScheduled(item.roomId); notify('已取消发送'); } catch (error) { notify(error.message); } }} />}

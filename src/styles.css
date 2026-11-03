@@ -874,3 +874,19 @@ button.message-read-status.is-read { color: var(--text-1); }
 .reaction-all h4 { margin: 6px 2px 2px; color: var(--text-2); font-size: 11px; font-weight: 600; }
 .reaction-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
 .reaction-grid button { width: 100%; height: 34px; }
+
+/* 合并转发 */
+.forward-mode { margin-bottom: 10px; }
+.bundle-card { display: flex; flex-direction: column; gap: 2px; min-width: 220px; max-width: 320px; padding: 2px 0 4px; text-align: left; color: inherit; }
+.bundle-card b { font-weight: 600; margin-bottom: 2px; }
+.bundle-card span { font-size: 12px; line-height: 17px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mine .bundle-card span { color: rgba(255, 255, 255, .85); }
+.bundle-card small { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); font-size: 11px; color: var(--text-2); }
+.mine .bundle-card small { border-top-color: rgba(255, 255, 255, .3); color: rgba(255, 255, 255, .85); }
+.bundle-list { display: flex; flex-direction: column; max-height: 60vh; overflow-y: auto; }
+.bundle-item { padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.bundle-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.bundle-image { width: 96px; height: 96px; border-radius: 8px; overflow: hidden; }
+.bundle-image img { width: 100%; height: 100%; object-fit: cover; }
+.bundle-file { display: inline-flex; gap: 6px; align-items: baseline; padding: 6px 10px; border-radius: 8px; background: var(--fill-1); color: var(--text-1); text-decoration: none; font-size: 13px; }
+.bundle-file small { color: var(--text-2); }

@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { Camera, Check, Search, Users, ArrowRight, Wifi, ExternalLink, Bell, LoaderCircle, LogOut, KeyRound, Copy, Bot } from 'lucide-react';
-import { api, upload, formatSize, absoluteUrl } from './api';
+import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './api';
+import { FormattedText } from './markdown';
 import { Modal, Avatar, IdentityFields } from './components';
 import { InvitationShare, JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
@@ -68,14 +69,16 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
 export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState(null);
+  const [merge, setMerge] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError('');
-    try { await onForward(target); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
+    try { await onForward(target, merge); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
   }
-  return <Modal title={`转发 ${count} 条消息`} subtitle="选择一个会话，消息会逐条发送过去。" onClose={onClose}><form onSubmit={submit}>
+  return <Modal title={`转发 ${count} 条消息`} subtitle={merge ? '合成一条「聊天记录」发过去，点开可以看到每条消息。' : '选择一个会话，消息会逐条发送过去。'} onClose={onClose}><form onSubmit={submit}>
+    {count > 1 && <div className="segmented-control forward-mode" role="radiogroup" aria-label="转发方式">{[[false, '逐条转发'], [true, '合并转发']].map(([value, label]) => <button type="button" key={label} role="radio" aria-checked={merge === value} className={merge === value ? 'active' : ''} onClick={() => setMerge(value)}>{label}</button>)}</div>}
     <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
     <div className="member-picker" role="radiogroup" aria-label="转发到">{filtered.map(room => <label className="member-option" key={room.id}>
       <input type="radio" name="forward-target" checked={target?.id === room.id} onChange={() => setTarget(room)} />{icon(room)}<span>{room.name}</span>
@@ -367,6 +370,20 @@ export function MuteDialog({ user, onClose, onDone }) {
       <button type="button" key={value} className={`secondary-button ${minutes === value ? 'selected' : ''}`} onClick={() => setMinutes(value)}>{label}</button>)}</div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button danger-button" disabled={busy} onClick={submit}>{busy ? '正在禁言…' : '禁言'}</button></div>
+  </Modal>;
+}
+
+// 合并转发的聊天记录：按原来的顺序列出每条消息，图片可以点开，文件可以下载。
+export function BundleDialog({ message, privateMode, onPreview, onClose }) {
+  const stamp = time => `${new Date(time).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} ${formatTime(time)}`;
+  return <Modal title={message.bundle.title} subtitle={`共 ${message.bundle.items.length} 条消息`} onClose={onClose} wide>
+    <div className="bundle-list">{message.bundle.items.map((item, index) => <article key={index} className="bundle-item">
+      <div className="thread-meta"><b>{item.senderName}</b><time>{stamp(item.createdAt)}</time></div>
+      {item.text && (privateMode ? <p className="masked-preview">****</p> : <FormattedText text={item.text} />)}
+      {item.attachments.length > 0 && !privateMode && <div className="bundle-files">{item.attachments.map(file => file.mime.startsWith('image/')
+        ? <button type="button" key={file.id} className="bundle-image" onClick={() => onPreview(file)}><img src={mediaUrl(file.id)} alt={file.name} loading="lazy" /></button>
+        : <a key={file.id} className="bundle-file" href={mediaUrl(file.id, true)} download>{file.name}<small>{formatSize(file.size)}</small></a>)}</div>}
+    </article>)}</div>
   </Modal>;
 }
 

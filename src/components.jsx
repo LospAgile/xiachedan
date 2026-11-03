@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
-import { FormattedText, LinkPreview, firstLink } from './markdown';
+import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
 import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
 import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
@@ -58,6 +58,16 @@ function FileCard({ file }) {
     <span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
     <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span><Download size={15} />
   </a>;
+}
+
+// 合并转发的聊天记录卡片：显示前三条，点开看全部。
+function BundleCard({ message, onOpen }) {
+  const { bundle } = message;
+  return <button type="button" className="bundle-card" onClick={() => onOpen?.(message)}>
+    <b>{bundle.title}</b>
+    {bundle.items.slice(0, 3).map((item, index) => <span key={index}>{item.senderName}：{item.text ? plainText(item.text).replace(/\s+/g, ' ') : item.attachments.map(file => `[${file.name}]`).join(' ')}</span>)}
+    <small>聊天记录 · 共 {bundle.items.length} 条</small>
+  </button>;
 }
 
 // 投票卡片：选中即投，多选可勾多个；结果对所有人公开，悬停能看到投票人。
@@ -156,7 +166,7 @@ function ReactionPalette({ options, chosen, onPick, onClose }) {
   </div>;
 }
 
-export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf }) {
+export function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -210,9 +220,9 @@ export function Message({ message, user, mine, continued = false, privateMode, o
     {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo)} />}
-    {message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} /><div className="bubble-meta-row">{meta}</div></>
+    {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} /><div className="bubble-meta-row">{meta}</div></> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} /><div className="bubble-meta-row">{meta}</div></>
       : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={meta} />}
-    {message.text && !message.poll && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
+    {message.text && !message.poll && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {message.attachments.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}
     {!message.text && (mediaLast ? <span className="bubble-meta-overlay">{meta}</span> : <div className="bubble-meta-row">{meta}</div>)}
   </>;
