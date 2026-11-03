@@ -342,7 +342,7 @@ textarea { resize: none; line-height: 20px; }
 .reaction-palette button { width: 32px; height: 32px; border-radius: 16px; font-size: 18px; line-height: 32px; }
 .reaction-palette button.chosen { background: var(--fill-3); }
 @media (hover: hover) and (pointer: fine) { .reaction-palette button:hover { background: var(--fill-2); transform: scale(1.12); } }
-.message-quote { display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px; border-radius: 10px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
+.message-quote { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 1px; width: 100%; max-width: 360px; margin: 0 0 6px; padding: 5px 8px 5px 11px; border-radius: 6px; background: var(--fill-1); font-size: 12px; line-height: 16px; text-align: left; color: var(--text-2); }
 .message-quote b { font-weight: 600; color: var(--quote-color, var(--text-1)); }
 .message-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .has-media .message-quote { margin: 4px 4px 2px; width: auto; }
@@ -847,8 +847,9 @@ button.message-read-status.is-read { color: var(--text-1); }
 .font-size-control { margin-top: 12px; grid-template-columns: repeat(4, 1fr); }
 
 /* 引用块左侧竖条用被引用者的名字颜色 */
-.message-quote { box-shadow: inset 3px 0 0 var(--quote-color, var(--accent-bright)); }
-.mine .message-quote { box-shadow: inset 3px 0 0 #fff; }
+/* 引用竖条：一根直条，由圆角裁出两端（Telegram 式）；自己的气泡里用半透明白，不抢正文 */
+.message-quote::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--quote-color, var(--accent-bright)); }
+.mine .message-quote::before { background: rgba(255, 255, 255, .7); }
 .name-colors { align-items: center; margin: 6px 0 4px; }
 .name-color-auto { min-height: 26px; padding: 0 10px; border-radius: 13px; background: var(--fill-1); color: var(--text-2); font-size: 12px; }
 .name-color-auto.active { box-shadow: 0 0 0 2px var(--accent-icon); color: var(--text-1); }
