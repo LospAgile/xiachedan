@@ -7,7 +7,7 @@ import { previewText } from './history';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onSent, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -21,7 +21,6 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   const fileInput = useRef();
   const textarea = useRef();
   const draftsRef = useRef(drafts);
-  const attempts = useRef({});
   const draft = drafts[room.id] || empty;
   draftsRef.current = drafts;
   const update = (id, fn) => setDrafts(previous => ({ ...previous, [id]: fn(previous[id] || empty) }));
@@ -109,27 +108,20 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
   }
   async function send() {
     if (editing) return saveEdit();
-    if (sending || !connected || (!draft.text.trim() && !draft.files.length) || draft.files.some(file => !file.attachment)) return;
+    if ((!draft.text.trim() && !draft.files.length) || draft.files.some(file => !file.attachment)) return;
     const roomId = room.id;
     const snapshot = draft;
     const replyTo = reply?.id || null;
     // 只保留正文里仍写着「@名字」的提及。
     const nameOf = id => id === '*' ? EVERYONE.name : members.find(user => user.id === id)?.name;
     const mentions = (snapshot.mentions || []).filter(id => nameOf(id) && snapshot.text.includes(`@${nameOf(id)}`));
-    const signature = JSON.stringify([snapshot.text, snapshot.files.map(file => file.attachment.id), replyTo, mentions]);
-    const attempt = attempts.current[roomId];
-    const clientId = attempt?.signature === signature ? attempt.clientId : uid();
-    attempts.current[roomId] = { signature, clientId };
     textarea.current?.focus({ preventScroll: true });
-    setSending(true);
-    try {
-      const { message } = await api('messages', { roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId, ...(replyTo ? { replyTo } : {}), ...(mentions.length ? { mentions } : {}) });
-      onSent(message);
-      if (replyTo) onCancelReply?.();
-      for (const file of snapshot.files) URL.revokeObjectURL(file.url);
-      update(roomId, () => empty);
-      delete attempts.current[roomId];
-    } catch (error) { notify(`${error.message}，草稿已保留`); } finally { setSending(false); }
+    // 交给发件箱发送，输入框立即清空；失败的消息留在会话底部，可重试或删除。
+    onQueue({ roomId, text: snapshot.text, attachmentIds: snapshot.files.map(file => file.attachment.id), clientId: uid(), ...(replyTo ? { replyTo } : {}), ...(mentions.length ? { mentions } : {}) },
+      { text: snapshot.text, files: snapshot.files.map(file => file.file.name) });
+    if (replyTo) onCancelReply?.();
+    for (const file of snapshot.files) URL.revokeObjectURL(file.url);
+    update(roomId, () => empty);
   }
   useLayoutEffect(() => {
     const node = textarea.current;
@@ -137,7 +129,8 @@ export default function Composer({ room, connected, onSent, notify, reply, reply
     node.style.height = 'auto';
     node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
   }, [draft.text, editText, editing?.id, room.id]);
-  const ready = connected && !sending && (editing || ((draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment)));
+  // 新消息断网时也能发，先进发件箱排队；编辑仍需在线。
+  const ready = !sending && (editing ? connected : (draft.text.trim() || draft.files.length) && draft.files.every(file => file.attachment));
   // 选择回复时把焦点交给输入框。
   useEffect(() => { if (reply) textarea.current?.focus({ preventScroll: true }); }, [reply?.id]);
   useEffect(() => {

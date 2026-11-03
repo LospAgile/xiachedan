@@ -914,3 +914,10 @@ button.message-read-status.is-read { color: var(--text-1); }
 .conversation.dragging { box-shadow: var(--shadow-2); cursor: grabbing; }
 .conversation.dragging:not(.active) { background: var(--glass-solid); }
 .conversation.dragging::after { display: none; }
+
+/* 发件箱：未发出的消息 */
+.outbox-message:not(.failed) .message-bubble { opacity: .65; }
+.outbox-file { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.outbox-status { align-items: center; gap: 4px; }
+.outbox-message.has-error .outbox-status { color: var(--danger-text); }
+.outbox-status button { margin-left: 6px; color: var(--accent-icon, var(--accent)); font-size: 11px; font-weight: 600; }

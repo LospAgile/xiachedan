@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -294,6 +294,24 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     {mine && avatar}
   </article>;
 });
+
+// 发件箱里还没发出去的消息：发送中半透明，失败的在下方给出原因和「重试 / 删除」。
+export function OutboxMessage({ item, avatarColumn, onRetry, onDiscard }) {
+  const status = item.status === 'sending' ? <><LoaderCircle className="spin" size={12} />发送中…</>
+    : item.status === 'waiting' && !item.error ? <><LoaderCircle className="spin" size={12} />等待网络…</>
+    : <><CircleAlert size={12} /><span>{item.error || '发送失败'}</span>
+      <button type="button" onClick={() => onRetry(item.clientId)}>重试</button><button type="button" onClick={() => onDiscard(item.clientId)}>删除</button></>;
+  return <div className={`message-group mine outbox-message ${item.status} ${item.error || item.status === 'failed' ? 'has-error' : ''}`} data-client-id={item.clientId}>
+    <div className="group-rows"><article className="message-row mine last"><div className="message-column">
+      <div className="bubble-line"><div className="message-bubble">
+        {item.preview.text && <div className="message-text">{item.preview.text}</div>}
+        {item.preview.files.map((name, index) => <div className="outbox-file" key={index}><FileText size={14} />{name}</div>)}
+      </div></div>
+      <div className="read-line outbox-status" role="status">{status}</div>
+    </div></article></div>
+    {avatarColumn && <div className="group-avatar" />}
+  </div>;
+}
 
 export function ContextMenu({ menu, onClose }) {
   const ref = useRef();
