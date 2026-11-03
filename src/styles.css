@@ -362,7 +362,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .read-detail h4 { display: flex; justify-content: space-between; margin: 0; padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: var(--text-2); }
 .read-detail h4 small { font-size: 11px; font-variant-numeric: tabular-nums; }
 .read-detail ul { margin: 0; padding: 0; list-style: none; }
-.read-detail li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; font-size: 13px; }
+.read-detail li button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; border-radius: 8px; font-size: 13px; text-align: left; }
+@media (hover: hover) and (pointer: fine) { .read-detail li button:hover { background: var(--fill-2); } }
 .read-detail li span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .read-detail p { padding: 2px 8px 6px; font-size: 12px; color: var(--text-3); }
 .attachment + .attachment { margin-top: 4px; }
@@ -835,8 +836,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .group-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .group-rows > :first-child { margin-top: 0; }
 .group-avatar { flex: none; width: 32px; display: flex; flex-direction: column; justify-content: flex-end; }
-.group-avatar .avatar { position: sticky; bottom: -34px; }
-@media (max-width: 760px) { .group-avatar .avatar { bottom: -42px; } }
+.group-avatar > .avatar, .group-avatar > .avatar-button { position: sticky; bottom: -34px; }
+@media (max-width: 760px) { .group-avatar > .avatar, .group-avatar > .avatar-button { bottom: -42px; } }
 
 /* 主题色与字号 */
 .accent-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
@@ -973,3 +974,30 @@ button.message-read-status.is-read { color: var(--text-1); }
 .slash-picker button { justify-content: space-between; }
 .slash-picker code { flex: none; padding: 0 5px; border-radius: 5px; background: var(--fill-2); color: var(--text-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .slash-picker button.active code { background: rgba(255, 255, 255, .2); color: #fff; }
+
+/* 头像和名字可点：看资料卡 */
+.avatar-button { display: inline-flex; padding: 0; border-radius: 50%; cursor: pointer; }
+.avatar-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.name-button { padding: 0; font: inherit; color: inherit; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .name-button:hover { text-decoration: underline; text-underline-offset: 2px; } }
+.profile-card { position: fixed; z-index: 60; width: 260px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 20px 16px 16px; border-radius: 16px; text-align: center;
+  background: var(--glass-solid); -webkit-backdrop-filter: blur(30px) saturate(180%); backdrop-filter: blur(30px) saturate(180%); box-shadow: var(--glass-edge), var(--shadow-2); animation: menu-in 140ms var(--ease-out); }
+.profile-card:focus { outline: none; }
+.profile-card h3 { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 16px; font-weight: 600; }
+.profile-status { margin: 0; font-size: 12px; color: var(--text-2); }
+.profile-status.online { color: var(--online, #34c759); }
+.profile-card dl { width: 100%; margin: 8px 0 4px; padding: 8px 10px; border-radius: 10px; background: var(--fill-1); text-align: left; font-size: 13px; }
+.profile-card dt { font-size: 11px; color: var(--text-2); }
+.profile-card dd { margin: 0; overflow-wrap: anywhere; }
+.profile-card dd + dt { margin-top: 6px; }
+.profile-card button { width: 100%; margin-top: 8px; justify-content: center; gap: 6px; }
+.profile-note { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 6px; padding: 7px 10px; border-radius: 10px; background: var(--fill-1); text-align: left; font-size: 13px; }
+.profile-card button.profile-note { margin-top: 6px; justify-content: flex-start; }
+.profile-note small { flex: none; font-size: 11px; color: var(--text-2); }
+.profile-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.profile-note.empty > span { color: var(--text-3); }
+.profile-note svg { flex: none; color: var(--text-3); }
+@media (hover: hover) and (pointer: fine) { .profile-card button.profile-note:hover { background: var(--fill-2); } }
+.profile-note.editing { flex-direction: column; align-items: stretch; background: none; padding: 0; }
+.profile-note.editing > span { display: flex; gap: 8px; }
+.profile-card .profile-note.editing button { margin-top: 0; }

@@ -208,11 +208,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (until) throw fail(until === Infinity ? '你已被管理员禁言' : `你已被管理员禁言，${new Date(until).toLocaleString('zh-CN', { hour12: false })} 后恢复`, 403);
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
+  const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -693,6 +694,19 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const event = { roomId: row.room_id, messageId: row.id, reactions: reactionsOf(row.id) };
     broadcast({ type: 'message-reactions', ...event }, row.room_id);
     res.json(event);
+  });
+  // 给别人写备注：只存给自己看，空白表示删除；同步到自己的其他设备。
+  app.post('/api/user-note', (req, res) => {
+    rateLimit(req, 'notes', 60);
+    const id = req.body?.userId;
+    if (typeof id !== 'string' || !userById(id)) throw fail('成员不存在', 404);
+    if (id === req.user.id) throw fail('不能给自己写备注');
+    if (typeof req.body.note !== 'string' || req.body.note.trim().length > 200) throw fail('备注最多 200 个字');
+    const note = req.body.note.trim();
+    if (note) stmt('INSERT INTO user_notes (owner_id,user_id,note,updated_at) VALUES (?,?,?,?) ON CONFLICT(owner_id,user_id) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at').run(req.user.id, id, note, Date.now());
+    else stmt('DELETE FROM user_notes WHERE owner_id=? AND user_id=?').run(req.user.id, id);
+    deliver({ type: 'user-note', userId: id, note }, socket => socket.userId === req.user.id);
+    res.json({ userId: id, note });
   });
   app.post('/api/profile', (req, res) => {
     rateLimit(req, 'profile', 20);

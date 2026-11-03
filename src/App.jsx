@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, upload } from './api';
-import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
+import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
@@ -55,6 +55,9 @@ export default function App() {
   const resizing = useRef(null);
   const [dismissedNotices, setDismissedNotices] = useState(() => readStorage('linliao.announcements', {}));
   const [readDetail, setReadDetail] = useState(null);
+  const [profileCard, setProfileCard] = useState(null);
+  const closeProfile = useCallback(() => setProfileCard(null), []);
+  const avatarClick = useRef(0);
   const [recalling, setRecalling] = useState(null);
   const [removing, setRemoving] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
@@ -86,7 +89,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction, reorder: reorderPinned } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
@@ -261,8 +264,27 @@ export default function App() {
   }
   async function directMessage(user) {
     if (user.id === state.me.id) return setModal('profile');
-    try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); }
+    try { const result = await api('rooms', { userId: user.id }); await refresh(); openRoom(result.id); setModal(null); setTimeout(() => document.querySelector('.composer textarea')?.focus(), 60); }
     catch (error) { notify(error.message); }
+  }
+  // 资料卡贴着头像弹出：头像在右半边时卡片放在左侧。
+  function openProfile(user, element) {
+    const rect = element.getBoundingClientRect();
+    setProfileCard({ userId: user.id, x: rect.left > innerWidth / 2 ? rect.left - 268 : rect.right + 8, y: rect.top });
+  }
+  // 群聊头像和成员列表：单击看资料卡，双击直接发起私聊；单击稍等一下，免得双击时卡片闪一下。键盘回车立即打开。
+  // 私聊里已经在和对方说话：单击只看资料卡，不等待双击。
+  const profileClick = user => room?.kind === 'direct' ? { title: '查看资料', onClick: event => openProfile(user, event.currentTarget) } : ({
+    title: user.id === state.me.id ? '查看资料' : '单击查看资料，双击发消息',
+    onClick: event => { if (event.detail > 1) return; const element = event.currentTarget; clearTimeout(avatarClick.current);
+      avatarClick.current = setTimeout(() => openProfile(user, element), event.detail === 0 || user.id === state.me.id ? 0 : 220); },
+    onDoubleClick: () => { clearTimeout(avatarClick.current); if (user.id !== state.me.id) directMessage(user); },
+  });
+  const avatarButton = (user, children, className = 'avatar-button') => user
+    ? <button type="button" className={className} aria-label={`查看${user.name}的资料`} {...profileClick(user)}>{children}</button> : children;
+  async function saveNote(user, note) {
+    try { applyNote(await api('user-note', { userId: user.id, note })); notify(note.trim() ? '备注已保存' : '备注已删除'); }
+    catch (error) { notify(error.message); throw error; }
   }
   function openRoom(id) {
     if (!restoreConversation(id)) return;
@@ -361,6 +383,7 @@ export default function App() {
     onToggleSelect: target => setSelection(previous => previous.includes(target.id) ? previous.filter(id => id !== target.id) : [...previous, target.id]),
     onReadDetail: (event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(current => current?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); },
     onOpenBundle: setOpenBundle, onPick: setReactingTo, onPreview: setPreview,
+    onOpenProfile: (user, element) => latest.current.openProfile(user, element),
   }), []);
   const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
   if (startupError) return <div className="startup-state"><Logo /><h2>稍等，连接有点慢</h2><p>{startupError}</p><div className="startup-actions"><button className="primary-button" onClick={start}><RefreshCw size={15} />重新连接</button>{window.desktop && <button className="secondary-button" onClick={() => window.desktop.home()}>返回本机空间</button>}</div></div>;
@@ -373,7 +396,7 @@ export default function App() {
   const room = rooms.find(room => room.id === selected && !room.hidden);
   const groupMembers = !room ? [] : room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
-  latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead };
+  latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead, openProfile };
   const recipientIds = groupMembers.filter(user => user.id !== state.me.id).map(user => user.id);
   if (recipientIds.join() !== recipientsCache.current.join()) recipientsCache.current = recipientIds;
   const query = search.trim().toLowerCase();
@@ -425,7 +448,8 @@ export default function App() {
     </button>;
   };
   const groupOwner = room?.kind === 'group' ? room.ownerId : null;
-  const memberRow = (user, size, inGroup = false) => <div className="managed-member" key={user.id}><button className="member-row" onClick={() => directMessage(user)}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
+  // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
+  const memberRow = (user, size, inGroup = false, panel = false) => <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
@@ -472,7 +496,7 @@ export default function App() {
       <div className="conversation-body"><section className="chat-column">
         <header className="chat-toolbar" data-drag-region>
           <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />
-          <div className="toolbar-title glass"><span className="toolbar-icon">{roomIcon(room, 34)}</span><span className="toolbar-copy"><h2>{room.name}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></span></div>
+          <div className="toolbar-title glass">{room.kind === 'direct' && peer ? avatarButton(peer, roomIcon(room, 34), 'toolbar-icon avatar-button') : <span className="toolbar-icon">{roomIcon(room, 34)}</span>}<span className="toolbar-copy"><h2>{room.name}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></span></div>
           <div className="toolbar-actions">
             <button className={`toolbar-button glass privacy-toggle ${privateMode ? 'enabled' : ''}`} onClick={() => changePrivacy(value => !value)} role="switch" aria-checked={privateMode} aria-label="隐私模式" title="隐私模式 · ⌘⇧P · 悬停消息查看内容">{privateMode ? <EyeOff size={16} /> : <Eye size={16} />}<kbd>⌘⇧P</kbd></button>
             <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => { setShowMembers(value => !value); setPanelView('members'); }} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
@@ -492,7 +516,7 @@ export default function App() {
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
-        {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const avatar = room.kind !== 'direct' && !first.recalledAt && <div className="group-avatar"><Avatar user={userOf(first)} size={32} /></div>;
+        {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const avatar = room.kind !== 'direct' && !first.recalledAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={32} />)}</div>;
           return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users}
           reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))}
           user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
@@ -532,7 +556,7 @@ export default function App() {
               <p>{room.announcement?.text || '暂无公告'}</p></section>
           </>}
           {room.kind === 'public' && (isOwner || isAdmin) && <button className="history-entry" onClick={() => setGroupAction({ type: 'webhooks' })}><Bot size={16} /><span>大厅机器人</span><ChevronRight size={14} /></button>}
-          <div className="members-list">{groupMembers.map(user => memberRow(user, 30, room.kind === 'group'))}</div>
+          <div className="members-list">{groupMembers.map(user => memberRow(user, 30, room.kind === 'group', true))}</div>
           {room.kind === 'group' && <button className="leave-group" onClick={() => setGroupAction({ type: 'leave' })}><LogOut size={15} />退出群聊</button>}</>}</aside>}</div>
       </> : <div className="empty-conversation"><MessageCircle size={32} /><h2>选择一个对话</h2><button className="secondary-button" onClick={() => setModal('members')}>发起私聊</button></div>}
     </main>
@@ -549,7 +573,11 @@ export default function App() {
       return <ImageViewer images={images.length ? images : [preview]} index={images.length ? index : 0} onIndex={next => setPreview(images[next])} onClose={() => setPreview(null)} notify={notify} />;
     })()}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
-    {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail} />}
+    {profileCard && userMap[profileCard.userId] && <ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
+      note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
+      onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />}
+    {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
+      onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}

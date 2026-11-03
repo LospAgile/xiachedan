@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert } from 'lucide-react';
-import { mediaUrl, formatTime, formatSize, randomName } from './api';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine } from 'lucide-react';
+import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
 import { GROUPS as EMOJI_GROUPS } from './EmojiPicker';
@@ -190,7 +190,7 @@ function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
 }
 
 // users 只用来在成员资料变化时让消息重新渲染（引用里的名字、回应者头像都取自成员资料）。
-export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf }) {
+export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -252,7 +252,8 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const showName = !mine && !direct && !continued;
   const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
-    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
+    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
+      ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
     {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
@@ -336,7 +337,52 @@ export function ContextMenu({ menu, onClose }) {
   return <div ref={ref} role="menu" aria-label={menu.label} className="message-context-menu" onContextMenu={event => { event.preventDefault(); event.stopPropagation(); }} style={{ left: Math.max(8, Math.min(menu.x, innerWidth - 152)), top: Math.max(8, Math.min(menu.y, innerHeight - menu.items.length * 36 - 16)) }}>{menu.items.map((item, index) => <button key={item.id} autoFocus={index === 0} role="menuitem" onClick={() => { onClose(); item.action(); }}>{item.label}</button>)}</div>;
 }
 
-export function ReadDetail({ anchor, message, members, onClose }) {
+// 资料卡：点头像或名字弹出，显示在线状态、部门、签名；可以直接发消息（自己的卡片是编辑资料）。
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose }) {
+  const ref = useRef();
+  const [editingNote, setEditingNote] = useState(false);
+  const [draftNote, setDraftNote] = useState(note);
+  const [savingNote, setSavingNote] = useState(false);
+  const saveNote = async event => {
+    event.preventDefault();
+    setSavingNote(true);
+    try { await onSaveNote(draftNote); setEditingNote(false); } catch {} finally { setSavingNote(false); }
+  };
+  const [top, setTop] = useState(anchor.y);
+  useLayoutEffect(() => { const height = ref.current?.offsetHeight || 0; setTop(Math.max(8, Math.min(anchor.y, innerHeight - height - 8))); }, [anchor.y]);
+  useEffect(() => {
+    ref.current?.focus();
+    const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
+    const key = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', key);
+    window.addEventListener('resize', onClose);
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', onClose); };
+  }, [onClose]);
+  const status = user.removed ? '已离开空间' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线';
+  return <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className="profile-card"
+    style={{ left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
+    <Avatar user={user} size={64} online={user.removed ? undefined : user.online} />
+    <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}</h3>
+    <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>
+    {(user.department || user.bio) && <dl>
+      {user.department && <><dt>部门</dt><dd>{user.department}</dd></>}
+      {user.bio && <><dt>签名</dt><dd>{user.bio}</dd></>}
+    </dl>}
+    {/* 备注只有自己看得到，也只显示在资料卡里 */}
+    {!self && (editingNote ? <form className="profile-note editing" onSubmit={saveNote}>
+      <input autoFocus aria-label={`给${user.name}写备注`} placeholder="只有你自己能看到" maxLength={200} value={draftNote} disabled={savingNote}
+        onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
+      <span><button type="button" className="secondary-button" onClick={() => { setDraftNote(note); setEditingNote(false); }}>取消</button><button className="primary-button" disabled={savingNote}>保存</button></span>
+    </form> : <button type="button" className={`profile-note ${note ? '' : 'empty'}`} onClick={() => { setDraftNote(note); setEditingNote(true); }} title="只有你自己能看到备注">
+      <small>备注</small><span>{note || '添加备注'}</span><PencilLine size={13} />
+    </button>)}
+    {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
+      : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
+  </div>;
+}
+
+export function ReadDetail({ anchor, message, members, onClose, onOpenProfile }) {
   const ref = useRef();
   useEffect(() => {
     ref.current?.focus();
@@ -350,7 +396,7 @@ export function ReadDetail({ anchor, message, members, onClose }) {
   }, [onClose]);
   const read = members.filter(user => message.readBy?.includes(user.id));
   const unread = members.filter(user => !message.readBy?.includes(user.id));
-  const list = users => users.map(user => <li key={user.id}><Avatar user={user} size={20} /><span>{user.name}</span></li>);
+  const list = users => users.map(user => <li key={user.id}><button type="button" title="查看资料" onClick={event => onOpenProfile?.(user, event.currentTarget)}><Avatar user={user} size={20} /><span>{user.name}</span></button></li>);
   return <div ref={ref} role="dialog" aria-label="已读详情" tabIndex={-1} className="read-detail"
     style={{ left: Math.max(8, Math.min(anchor.x - 240, innerWidth - 248)), bottom: Math.max(8, innerHeight - anchor.y + 6) }}>
     <section><h4>已读<small>{read.length}</small></h4>{read.length ? <ul>{list(read)}</ul> : <p>还没有人读</p>}</section>
