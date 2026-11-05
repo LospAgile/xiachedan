@@ -5,7 +5,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, BundleDialog } from './dialogs';
+import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -71,6 +71,7 @@ export default function App() {
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
+  const [historyFor, setHistoryFor] = useState(null);
   // 撤回后可以「重新编辑」：原文只在本机内存里保留 10 分钟，用过一次就丢弃。
   const [recalledTexts, setRecalledTexts] = useState({});
   const [injectDraft, setInjectDraft] = useState(null);
@@ -432,6 +433,7 @@ export default function App() {
     onReadDetail: (event, message) => { const rect = event.currentTarget.getBoundingClientRect(); setReadDetail(current => current?.id === message.id ? null : { id: message.id, x: rect.right, y: rect.top }); },
     onOpenBundle: setOpenBundle, onPick: setReactingTo, onPreview: setPreview,
     onReEdit: message => latest.current.reEdit(message),
+    onShowHistory: setHistoryFor,
     onOpenProfile: (user, element) => latest.current.openProfile(user, element),
   }), []);
   const toastElement = toast && <div className="toast" role="status"><Check size={15} />{toast}</div>;
@@ -657,6 +659,7 @@ export default function App() {
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
+    {historyFor && <EditHistoryDialog message={historyFor} onClose={() => setHistoryFor(null)} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => {
       syncHistory([message]); notify('消息已撤回');
       if (recalling.text?.trim()) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }

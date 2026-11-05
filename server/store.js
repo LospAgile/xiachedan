@@ -105,6 +105,9 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS session_devices (token_hash TEXT PRIMARY KEY, user_agent TEXT NOT NULL, ip TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
     -- 编辑过的消息记下最后一次编辑时间，界面显示「已编辑」。
     CREATE TABLE IF NOT EXISTS message_edits (message_id TEXT PRIMARY KEY, edited_at INTEGER NOT NULL);
+    -- 编辑历史：每次编辑前的正文。earlier_lost=1 表示在保存历史之前已经编辑过，更早的版本没有记录。
+    CREATE TABLE IF NOT EXISTS message_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id TEXT NOT NULL, text TEXT NOT NULL, replaced_at INTEGER NOT NULL, earlier_lost INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS message_versions_message ON message_versions(message_id);
     -- 群机器人：外部系统凭地址里的令牌向一个会话发消息；只保存令牌摘要。机器人发的消息另记名字，删掉机器人后仍能显示。
     CREATE TABLE IF NOT EXISTS webhooks (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, name TEXT NOT NULL, token_hash TEXT NOT NULL, created_by TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS message_bots (message_id TEXT PRIMARY KEY, name TEXT NOT NULL);

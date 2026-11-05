@@ -755,6 +755,8 @@ button.message-read-status.is-read { color: var(--text-1); }
 .webhook-create { display: flex; gap: 8px; }
 .webhook-create input { flex: 1; min-width: 0; }
 .edited-mark { margin-right: 4px; }
+button.edited-mark { padding: 0; font: inherit; color: inherit; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { button.edited-mark:hover { text-decoration: underline; text-underline-offset: 2px; } }
 
 /* 消息简单格式 */
 .message-text a { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
@@ -1120,3 +1122,9 @@ button.message-read-status.is-read { color: var(--text-1); }
 .album .video-attachment .attachment-caption { top: 0; bottom: auto; padding: 4px 6px 14px; background: linear-gradient(rgba(0, 0, 0, .55), transparent); }
 .album + .file-card, .album + .attachment { margin-top: 4px; }
 .has-album .bubble-meta-overlay { bottom: 12px; }
+
+/* 编辑历史 */
+.edit-history { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.edit-history li { padding: 10px 12px; border-radius: 10px; background: var(--fill-1); }
+.edit-history li.current { box-shadow: inset 3px 0 0 var(--accent-bright); }
+.edit-history small { display: block; margin-bottom: 4px; font-size: 11px; color: var(--text-2); }

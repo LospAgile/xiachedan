@@ -458,6 +458,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
         stmt('DELETE FROM message_edits WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_versions WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -543,6 +544,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const kept = mentionsOf(id).filter(target => target === '*' ? text.includes('@所有人') : text.includes(`@${userById(target)?.name}`));
       db.exec('BEGIN');
       try {
+        const lost = editedAt(id) && !stmt('SELECT 1 FROM message_versions WHERE message_id=?').get(id) ? 1 : 0;
+        stmt('INSERT INTO message_versions (message_id, text, replaced_at, earlier_lost) VALUES (?,?,?,?)').run(id, row.text, Date.now(), lost);
         stmt('UPDATE messages SET text=? WHERE id=?').run(text, id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         for (const target of kept) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
@@ -552,6 +555,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       broadcast({ type: 'message-edited', message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)) }, row.room_id);
     }
     res.json({ message: withReads([serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id))])[0] });
+  });
+  // 编辑历史：会话成员可以看到每个版本和写下的时间；撤回或清空后不再提供。
+  app.get('/api/message-history', (req, res) => {
+    const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(req.query.id);
+    if (!row || row.seq <= clearedThroughSeq() || recalledAt(row.id)) throw fail('消息不存在或已撤回', 404);
+    requireRoom(row.room_id, req.user.id);
+    const saved = stmt('SELECT text, replaced_at, earlier_lost FROM message_versions WHERE message_id=? ORDER BY id').all(row.id);
+    const versions = saved.map((version, index) => ({ text: version.text, at: index ? saved[index - 1].replaced_at : saved[0].earlier_lost ? null : row.created_at }));
+    res.json({ versions, current: { text: row.text, at: editedAt(row.id) || row.created_at }, complete: !saved[0]?.earlier_lost && (saved.length > 0 || !editedAt(row.id)) });
   });
   app.get('/api/storage', (req, res) => {
     if (req.user.id !== ownerId()) throw fail('只有空间创建者可以管理聊天记录', 403);
@@ -565,7 +577,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -922,7 +934,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
   const purgeExpired = () => {
     const days = retentionDays();
     if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;

@@ -226,7 +226,7 @@ function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
 }
 
 // users 只用来在成员资料变化时让消息重新渲染（引用里的名字、回应者头像都取自成员资料）。
-export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown, reEditable = false, onReEdit, quickReact = false }) {
+export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown, reEditable = false, onReEdit, quickReact = false, onShowHistory }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -277,7 +277,8 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const readNode = mine && recipients.length > 0 && Array.isArray(message.readBy) && (direct
     ? <span className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount}>{readLabel}</span>
     : <button type="button" className={`message-read-status ${readCount ? 'is-read' : ''}`} data-read-count={readCount} aria-haspopup="dialog" title="查看已读成员" onClick={event => onReadDetail?.(event, message)}>{readLabel}</button>);
-  const meta = <span className="bubble-meta">{message.editedAt && <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>}{time}</span>;
+  const meta = <span className="bubble-meta">{message.editedAt && (hidden || !onShowHistory ? <span className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}`}>已编辑</span>
+    : <button type="button" className="edited-mark" title={`编辑于 ${formatTime(message.editedAt)}，点击查看编辑历史`} onClick={event => { event.stopPropagation(); onShowHistory(message); }}>已编辑</button>)}{time}</span>;
   const reactions = message.reactions || [];
   // 有表情回应时，回应和时间一起放在气泡底部同一行（Telegram 式）。
   const reactionRow = reactions.length > 0 && <div className="bubble-reactions">

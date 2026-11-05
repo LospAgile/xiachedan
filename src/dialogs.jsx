@@ -128,6 +128,23 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
   </form></Modal>;
 }
 
+// 编辑历史：最新的在上面，每个版本带写下的时间。
+export function EditHistoryDialog({ message, onClose }) {
+  const [history, setHistory] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { api(`message-history?id=${encodeURIComponent(message.id)}`).then(setHistory).catch(failure => setError(failure.message)); }, [message.id]);
+  const when = time => new Date(time).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const versions = history ? [{ ...history.current, current: true }, ...[...history.versions].reverse()] : [];
+  return <Modal title="编辑历史" subtitle={history ? `共 ${versions.length} 个版本` : undefined} onClose={onClose}>
+    {error ? <p className="form-error" role="alert">{error}</p> : !history ? <p className="inline-note">正在读取…</p> : <ol className="edit-history">
+      {versions.map((version, index) => <li key={index} className={version.current ? 'current' : ''}>
+        <small>{version.current ? '当前版本' : index === versions.length - 1 && history.complete ? '原始版本' : '较早版本'}{version.at ? ` · ${when(version.at)}` : ''}</small>
+        <FormattedText text={version.text || '（无文字）'} /></li>)}
+    </ol>}
+    {history && !history.complete && <p className="inline-note">更早的版本在开始记录编辑历史之前，没有保存。</p>}
+  </Modal>;
+}
+
 export function RemoveMemberDialog({ user, onClose, onRemoved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
