@@ -9,7 +9,7 @@ import { isSendKey, modKey } from './chatPrefs';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter' }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -175,6 +175,10 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
   useEffect(() => { setPicker(null); setSlash(null); }, [room.id]);
+  // 离开会话时把剩下的草稿交给侧栏，显示「[草稿]」。
+  const onDraftRef = useRef(onDraft);
+  onDraftRef.current = onDraft;
+  useEffect(() => { const id = room.id; return () => onDraftRef.current?.(id, draftsRef.current[id]?.text.trim() || ''); }, [room.id]);
   return <div className="composer-area">
     {slashOptions.length > 0 && <div className="mention-picker slash-picker" role="listbox" id="slash-picker" aria-label="插入格式">
       {slashOptions.map((item, index) => <button type="button" role="option" id={`slash-option-${index}`} key={item.id} aria-selected={index === slash.index} className={index === slash.index ? 'active' : ''}

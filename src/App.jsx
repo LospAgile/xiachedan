@@ -58,6 +58,7 @@ export default function App() {
   const [dismissedNotices, setDismissedNotices] = useState(() => readStorage('linliao.announcements', {}));
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
+  const [draftTexts, setDraftTexts] = useState({});
   const closeProfile = useCallback(() => setProfileCard(null), []);
   const avatarClick = useRef(0);
   const [recalling, setRecalling] = useState(null);
@@ -448,7 +449,7 @@ export default function App() {
       onContextMenu={event => { if (longPress.current.fired) event.preventDefault(); else conversationMenu(event, target); }}
       onKeyDown={event => { if (sortable && pinnedDrag.keyMove(event, target.id, pinnedIds)) return; if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { const rect = event.currentTarget.getBoundingClientRect(); conversationMenu(Object.assign(pressEvent(rect.left + 24, rect.bottom), { preventDefault: () => event.preventDefault() }), target); } }}>
       <span className="conversation-icon" title={compact ? target.name : undefined}>{roomIcon(target, 44)}{compact && showUnread && <i className="compact-dot" aria-hidden="true" />}</span><span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span>{target.pinned && <Pin className="conversation-pin" size={11} aria-label="已置顶" />}{target.muted && <BellOff className="conversation-pin" size={11} aria-label="免打扰" />}<time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
-        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}{typingLabel(target) ? <span className="typing-text">{typingLabel(target)}</span> : <PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>}{showUnread && <span className="unread-badge" aria-label={label} title={label}>{status?.hasUnread ? status.exact ? status.count > 99 ? '99+' : status.count : '新' : ''}</span>}</span>
+        <span className="conversation-preview">{status?.mentioned && <span className="mention-flag">[有人@我]</span>}{typingLabel(target) ? <span className="typing-text">{typingLabel(target)}</span> : target.id !== selected && draftTexts[target.id] ? <span className="draft-preview"><span className="draft-tag">[草稿]</span><PrivatePreview privateMode={privateMode}>{draftTexts[target.id].replace(/\s+/g, ' ')}</PrivatePreview></span> : <PrivatePreview privateMode={privateMode && Boolean(target.lastMessage)}>{previewText(target.lastMessage)}</PrivatePreview>}{showUnread && <span className="unread-badge" aria-label={label} title={label}>{status?.hasUnread ? status.exact ? status.count > 99 ? '99+' : status.count : '新' : ''}</span>}</span>
       </span>
     </button>;
   };
@@ -534,7 +535,7 @@ export default function App() {
         <span>已选 <b>{selection.length}</b> 条</span>
         <button className="secondary-button" onClick={() => setSelection(null)}>取消</button>
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
-      </div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer sendKey={chatPrefs.sendKey} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
+      </div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
         notice={scheduled.roomId === room.id && scheduled.items.length > 0 && <button type="button" className="scheduled-bar glass" onClick={() => setModal('scheduled')}><Clock size={14} />{scheduled.items.length} 条定时消息待发送 · 最近 {new Date(scheduled.items[0].sendAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</button>}
         onCreatePoll={() => setModal('poll')} onSchedule={text => setScheduleText(text)} onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
