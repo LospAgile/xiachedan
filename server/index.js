@@ -493,6 +493,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json({ message: serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(row.id)) });
   });
   // 禁言与解除：minutes 为 0 或不传表示一直禁言；不能禁言自己和其他管理者。
+  // 管理员帮成员设置部门（通讯录按部门分组）。
+  app.post('/api/admin/department', (req, res) => {
+    requireManager(req);
+    const target = typeof req.body?.userId === 'string' && userById(req.body.userId);
+    if (!target) throw fail('请选择有效成员');
+    const department = textValue(req.body.department, 40);
+    stmt('INSERT INTO user_profiles (user_id,department,bio,last_seen) VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET department=excluded.department').run(target.id, department, '', null);
+    broadcast({ type: 'users', users: users() });
+    res.json({ department });
+  });
   app.post('/api/admin/mute', (req, res) => {
     requireManager(req);
     const target = typeof req.body?.userId === 'string' && userById(req.body.userId);

@@ -1215,3 +1215,11 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .status-inputs { display: flex; gap: 8px; }
 .status-emoji-input { flex: none; width: 56px; text-align: center; font-size: 18px; }
 .settings-profile + .setting-row { margin-bottom: 12px; }
+
+/* 通讯录 */
+.modal.contacts-dialog { width: min(480px, calc(100vw - 24px)); }
+.contacts-search { margin: 12px 0 4px; }
+.contacts-group { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.contacts-group small { font-weight: 500; color: var(--text-3); }
+.dept-edit { margin-left: 6px; font-size: 11px; }
+.contacts-dialog .member-department { display: none; }

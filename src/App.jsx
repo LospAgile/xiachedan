@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor, activeStatus, StatusEmoji } from './components';
 import Onboarding from './Onboarding';
@@ -74,6 +75,7 @@ export default function App() {
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
+  const [contactQuery, setContactQuery] = useState('');
   // 会话列表上方的分组标签：全部 / 未读 / 群聊 / 私聊 / 自建文件夹；停在哪个标签只记在本机。
   const [folderTab, setFolderTab] = useState(() => localStorage.getItem('linliao.folderTab') || 'all');
   const [editingFolder, setEditingFolder] = useState(null);
@@ -554,6 +556,12 @@ export default function App() {
       ] });
     }}>管理</button>}
     {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>;
+  // 通讯录：按部门分组，没填部门的放最后；组内在线的排前面。
+  const contactNeedle = contactQuery.trim().toLowerCase();
+  const contactGroups = Object.entries(state.users.filter(user => !user.removed && (!contactNeedle || [user.name, user.department, user.bio].some(value => value?.toLowerCase().includes(contactNeedle))))
+    .reduce((groups, user) => { (groups[user.department || '未设置部门'] ||= []).push(user); return groups; }, {}))
+    .sort(([a], [b]) => (a === '未设置部门') - (b === '未设置部门') || a.localeCompare(b, 'zh-Hans-CN'))
+    .map(([department, members]) => [department, members.sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name, 'zh-Hans-CN'))]);
   const peerStatus = room?.kind === 'direct' && activeStatus(peer);
   const subtitle = room?.kind === 'direct' ? (peerStatus ? `${peerStatus.emoji} ${peerStatus.text} · `.replace(/^ /, '') : '') + (peer?.online ? '在线' : peer?.lastSeen ? seenText(peer.lastSeen) : '离线 · 上线后送达') : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && !previous.nudge && !message.nudge && previous.senderId === message.senderId &&
@@ -570,7 +578,7 @@ export default function App() {
   return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表">{resizer}
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={BookUser} label="通讯录" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
         {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
@@ -669,17 +677,23 @@ export default function App() {
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
     {modal === 'connection' && <SettingsDialog onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
-    {modal === 'members' && <Modal title="空间成员" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => memberRow(user, 32))}</div><div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
+    {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
+      <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索名字、部门或签名" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
+      <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
+        {!contactGroups.length && <p className="history-empty">没有找到「{contactQuery.trim()}」</p>}</div>
+      <div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && (() => {
       const images = currentMessages.filter(message => !message.recalledAt).flatMap(message => message.attachments.filter(file => file.mime.startsWith('image/')));
       const index = Math.max(0, images.findIndex(file => file.id === preview.id));
       return <ImageViewer images={images.length ? images : [preview]} index={images.length ? index : 0} onIndex={next => setPreview(images[next])} onClose={() => setPreview(null)} notify={notify} />;
     })()}
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
-    {profileCard && userMap[profileCard.userId] && <ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
+    {/* 从通讯录等弹窗里打开时，资料卡要挂在弹窗里面，否则会被弹窗挡住 */}
+    {profileCard && userMap[profileCard.userId] && createPortal(<ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
       onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onSetStatus={() => { setProfileCard(null); setModal('status'); }}
-      onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />}
+      onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
+      onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}

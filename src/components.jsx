@@ -406,7 +406,8 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment }) {
+  const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
   const [draftNote, setDraftNote] = useState(note);
@@ -421,11 +422,15 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
   useEffect(() => {
     ref.current?.focus();
     const dismiss = event => { if (!ref.current?.contains(event.target)) onClose(); };
-    const key = event => { if (event.key === 'Escape') onClose(); };
+    // 在弹窗里打开时，Esc 只关资料卡，不连带关掉弹窗。
+    const key = event => {
+      if (event.key !== 'Escape' || (ref.current?.contains(event.target) && event.target.tagName === 'INPUT')) return;
+      event.preventDefault(); event.stopPropagation(); onClose();
+    };
     document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', key);
+    document.addEventListener('keydown', key, true);
     window.addEventListener('resize', onClose);
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', onClose); };
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', key, true); window.removeEventListener('resize', onClose); };
   }, [onClose]);
   const status = user.removed ? '已离开空间' : user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线';
   return <div ref={ref} role="dialog" aria-label={`${user.name}的资料`} tabIndex={-1} className="profile-card"
@@ -434,14 +439,17 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}</h3>
     <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>
     {activeStatus(user) && <p className="profile-custom-status">{activeStatus(user).emoji} {activeStatus(user).text}{activeStatus(user).until && <small>到 {new Date(activeStatus(user).until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}</p>}
-    {(user.department || user.bio) && <dl>
-      {user.department && <><dt>部门</dt><dd>{user.department}</dd></>}
+    {department !== null ? <form className="profile-note editing" onSubmit={async event => { event.preventDefault(); try { await onSetDepartment(department.trim()); setDepartment(null); } catch {} }}>
+      <input autoFocus aria-label={`设置${user.name}的部门`} placeholder="部门，如：研发部" maxLength={40} value={department} onChange={event => setDepartment(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDepartment(null); } }} />
+      <span><button type="button" className="secondary-button" onClick={() => setDepartment(null)}>取消</button><button className="primary-button">保存</button></span></form>
+    : (user.department || user.bio || onSetDepartment) && <dl>
+      {(user.department || onSetDepartment) && <><dt>部门{onSetDepartment && <button type="button" className="text-button dept-edit" onClick={() => setDepartment(user.department || '')}>{user.department ? '修改' : '设置'}</button>}</dt><dd>{user.department || '未设置'}</dd></>}
       {user.bio && <><dt>签名</dt><dd>{user.bio}</dd></>}
     </dl>}
     {/* 备注只有自己看得到，也只显示在资料卡里 */}
     {!self && (editingNote ? <form className="profile-note editing" onSubmit={saveNote}>
       <input autoFocus aria-label={`给${user.name}写备注`} placeholder="只有你自己能看到" maxLength={200} value={draftNote} disabled={savingNote}
-        onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
+        onChange={event => setDraftNote(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDraftNote(note); setEditingNote(false); } }} />
       <span><button type="button" className="secondary-button" onClick={() => { setDraftNote(note); setEditingNote(false); }}>取消</button><button className="primary-button" disabled={savingNote}>保存</button></span>
     </form> : <button type="button" className={`profile-note ${note ? '' : 'empty'}`} onClick={() => { setDraftNote(note); setEditingNote(true); }} title="只有你自己能看到备注">
       <small>备注</small><span>{note || '添加备注'}</span><PencilLine size={13} />
