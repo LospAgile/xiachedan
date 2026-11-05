@@ -6,6 +6,7 @@ import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 import { isSendKey, modKey } from './chatPrefs';
+import { htmlToMarkdown } from './htmlToMarkdown';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
@@ -129,9 +130,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const node = textarea.current;
     const current = editing ? editText : draft.text;
     const start = node?.selectionStart ?? current.length, end = node?.selectionEnd ?? current.length;
-    const next = current.slice(0, start) + value + current.slice(end);
-    if (editing) setEditText(next); else update(room.id, state => ({ ...state, text: next }));
-    requestAnimationFrame(() => { node?.focus({ preventScroll: true }); node?.setSelectionRange(start + value.length, start + value.length); });
+    setText(current.slice(0, start) + value + current.slice(end), [start + value.length, start + value.length]);
   }
   async function saveEdit() {
     const text = editText.trim();
@@ -230,7 +229,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           // 有内容时每 3 秒最多告诉别人一次「正在输入」。
           if (event.target.value.trim() && Date.now() - typedAt.current > 3000) { typedAt.current = Date.now(); onTyping?.(room.id); }
         }} onSelect={event => { detectMention(event.currentTarget); detectSlash(event.currentTarget); }} onBlur={() => { setPicker(null); setSlash(null); }}
-        onPaste={event => { if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); } }}
+        onPaste={event => {
+          if (event.clipboardData.files.length) { event.preventDefault(); if (!sending) addFiles(event.clipboardData.files); return; }
+          // 从网页、文档复制的带格式内容转成 Markdown 再粘贴；没有格式时照常粘贴纯文本。
+          const markdown = htmlToMarkdown(event.clipboardData.getData('text/html'));
+          if (markdown && markdown !== event.clipboardData.getData('text/plain').trim()) { event.preventDefault(); insertText(markdown); }
+        }}
         onKeyDown={event => {
           if (slashOptions.length && !event.nativeEvent.isComposing) {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); const step = event.key === 'ArrowDown' ? 1 : slashOptions.length - 1; setSlash(value => ({ ...value, index: (value.index + step) % slashOptions.length })); return; }
