@@ -51,6 +51,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
       <p className="inline-note">{chatPrefs.avatarMode === 'top' ? '头像对齐一组连续消息的第一条，不随滚动移动。' : '一组连续消息很长时，头像贴着可视区底部跟随滚动（Telegram 式）。'}</p>
       <SettingRow title="群聊中显示自己的头像和名字"><Switch label="群聊中显示自己的头像和名字" checked={chatPrefs.showSelfInGroups} onChange={value => onChatPrefs({ showSelfInGroups: value })} /></SettingRow>
       <SettingRow title="私聊中显示双方的头像和名字"><Switch label="私聊中显示双方的头像和名字" checked={chatPrefs.showBothInDirect} onChange={value => onChatPrefs({ showBothInDirect: value })} /></SettingRow>
+      <SettingRow title="双击消息点 👍" description="关闭后，双击消息里的文字可以选中词语。"><Switch label="双击消息点赞" checked={chatPrefs.quickReact} onChange={value => onChatPrefs({ quickReact: value })} /></SettingRow>
       <h4>发送消息</h4>
       <div className="segmented-control" role="radiogroup" aria-label="发送键">{[['enter', 'Enter 发送'], ['mod-enter', `${modKey} Enter 发送`]].map(([value, label]) =>
         <button type="button" key={value} role="radio" aria-checked={chatPrefs.sendKey === value} className={chatPrefs.sendKey === value ? 'active' : ''} onClick={() => onChatPrefs({ sendKey: value })}>{label}</button>)}</div>
