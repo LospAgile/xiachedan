@@ -175,7 +175,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const mutes = new Map(stmt('SELECT user_id, until FROM member_mutes').all().map(row => [row.user_id, row.until]));
     const colors = new Map(stmt('SELECT user_id, color FROM user_name_colors').all().map(row => [row.user_id, row.color]));
     return rows.map(user => { const removed = isRemoved(user.id) || (cloud && !auth.activeId(user.id)); const profile = profiles.get(user.id);
-      return { ...user, removed, online: !removed && online.has(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
+      return { ...user, removed, online: !removed && online.has(user.id), status: removed ? null : statusOf(user.id), department: profile?.department || '', bio: profile?.bio || '', lastSeen: profile?.last_seen || null, nameColor: colors.get(user.id) ?? null, muted: Boolean(mutes.has(user.id) && (mutes.get(user.id) === null || mutes.get(user.id) > Date.now())) }; });
   };
   // 群主：记录的群主不在群里（或旧数据没有记录）时，由成员列表里最早的人接任；创建群聊时创建者排在第一位。
   const groupSettings = room => {
@@ -218,6 +218,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  const statusOf = id => {
+    const row = stmt('SELECT emoji, text, until FROM user_status WHERE user_id=?').get(id);
+    return row && (!row.until || row.until > Date.now()) ? { emoji: row.emoji, text: row.text, until: row.until } : null;
+  };
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
@@ -763,6 +767,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!removed) throw fail('文件夹不存在', 404);
     pushFolders(req.user.id);
     res.json({ folders: foldersFor(req.user.id) });
+  });
+  // 自定义状态：表情最多 8 个字符、文字最多 40 字；until 只能是将来 30 天内的时间；表情和文字都为空表示清除。
+  app.post('/api/status', (req, res) => {
+    rateLimit(req, 'status', 30);
+    const emoji = textValue(req.body?.emoji, 16), text = textValue(req.body?.text, 80);
+    if (emoji.length > 8 || text.length > 40) throw fail('状态最多 40 个字');
+    const until = req.body.until === null || req.body.until === undefined ? null : Number(req.body.until);
+    if (until !== null && (!Number.isSafeInteger(until) || until <= Date.now() || until > Date.now() + 30 * 86400000)) throw fail('状态的清除时间无效');
+    if (emoji || text) stmt('INSERT INTO user_status VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET emoji=excluded.emoji, text=excluded.text, until=excluded.until').run(req.user.id, emoji, text, until);
+    else stmt('DELETE FROM user_status WHERE user_id=?').run(req.user.id);
+    broadcast({ type: 'users', users: users() });
+    res.json({ status: statusOf(req.user.id) });
   });
   app.post('/api/user-note', (req, res) => {
     rateLimit(req, 'notes', 60);

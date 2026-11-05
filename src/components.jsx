@@ -160,6 +160,10 @@ function MessageText({ text, mentions = [], nameOf, viewerId, meta = null }) {
 
 // 群聊里按成员给昵称着色：同一个人颜色固定。
 // 自己选了颜色就用选的，否则按身份固定分配。
+// 自定义状态：过期的不显示（成员列表要等下一次推送才更新，这里再判断一次）。
+export const activeStatus = user => user?.status && (!user.status.until || user.status.until > Date.now()) ? user.status : null;
+const StatusEmoji = ({ user }) => { const status = activeStatus(user); return status?.emoji ? <span className="status-emoji" title={status.text || undefined}>{status.emoji}</span> : null; };
+export { StatusEmoji };
 export const nameColor = (id, user) => `var(--name-${Number.isInteger(user?.nameColor) ? user.nameColor : [...(id || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 7})`;
 
 // 引用块：原消息被撤回或清空时只说明状态；点击跳到原消息。
@@ -295,7 +299,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
     {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
-      ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
+      ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{!mine && <StatusEmoji user={user} />}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
     {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
@@ -402,7 +406,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus }) {
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
   const [draftNote, setDraftNote] = useState(note);
@@ -429,6 +433,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     <Avatar user={user} size={64} online={user.removed ? undefined : user.online} />
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}</h3>
     <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>
+    {activeStatus(user) && <p className="profile-custom-status">{activeStatus(user).emoji} {activeStatus(user).text}{activeStatus(user).until && <small>到 {new Date(activeStatus(user).until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}</p>}
     {(user.department || user.bio) && <dl>
       {user.department && <><dt>部门</dt><dd>{user.department}</dd></>}
       {user.bio && <><dt>签名</dt><dd>{user.bio}</dd></>}
@@ -441,6 +446,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     </form> : <button type="button" className={`profile-note ${note ? '' : 'empty'}`} onClick={() => { setDraftNote(note); setEditingNote(true); }} title="只有你自己能看到备注">
       <small>备注</small><span>{note || '添加备注'}</span><PencilLine size={13} />
     </button>)}
+    {self && onSetStatus && <button type="button" className="secondary-button" onClick={onSetStatus}>{activeStatus(user) ? '修改状态' : '设置状态'}</button>}
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
     {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, X, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
 import { api, formatSize } from './api';
 import { FormattedText } from './markdown';
-import { Avatar, Modal } from './components';
+import { Avatar, Modal, activeStatus } from './components';
 import { JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
 import { ACCENTS, FONT_SIZES, WALLPAPERS, wallpaperCss, readWallpaperImage, saveWallpaperImage } from './appearance';
@@ -23,7 +23,7 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords }) {
+export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -31,6 +31,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
   const panes = {
     account: <>
       <div className="settings-profile"><Avatar user={me} size={52} /><span><b>{me.name}</b><small>{cloud ? me.phone || me.email : '局域网成员'}</small></span></div>
+      {onSetStatus && <SettingRow title="状态" description={activeStatus(me) ? `${activeStatus(me).emoji} ${activeStatus(me).text}` : '让同事知道你在忙什么，比如开会、休假。'}><button type="button" className="secondary-button" onClick={onSetStatus}>{activeStatus(me) ? '修改' : '设置'}</button></SettingRow>}
       <div className="account-actions">
         <button type="button" className="secondary-button" onClick={onEditProfile}><PencilLine size={15} />编辑资料</button>
         {cloud && <button type="button" className="secondary-button" onClick={onPassword}><KeyRound size={15} />修改密码</button>}

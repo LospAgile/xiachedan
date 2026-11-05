@@ -1204,3 +1204,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .auto-delete-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--fill-2); font-size: 11px; font-weight: 500; color: var(--text-2); vertical-align: 2px; }
 .auto-delete-entry select { width: auto; min-height: 26px; padding: 0 6px; font-size: 12px; }
 .auto-delete-entry small { color: var(--text-2); font-size: 12px; }
+
+/* 自定义状态 */
+.status-emoji { margin-left: 4px; font-size: .95em; }
+.profile-custom-status { margin: 4px 0 0; padding: 6px 12px; border-radius: 10px; background: var(--fill-1); font-size: 13px; line-height: 18px; }
+.profile-custom-status small { display: block; margin-top: 2px; font-size: 11px; color: var(--text-2); }
+.status-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.status-presets button { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px; border-radius: 15px; background: var(--fill-1); font-size: 13px; }
+.status-presets button.active { background: var(--accent); color: #fff; }
+.status-inputs { display: flex; gap: 8px; }
+.status-emoji-input { flex: none; width: 56px; text-align: center; font-size: 18px; }
+.settings-profile + .setting-row { margin-bottom: 12px; }

@@ -129,6 +129,45 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
   </form></Modal>;
 }
 
+// 自定义状态：常用预设、表情和文字、到期自动清除。
+const STATUS_PRESETS = [['📅', '开会中'], ['🏖', '休假中'], ['🏠', '远程办公'], ['🍱', '吃饭中'], ['🎯', '专注中，晚点回复'], ['🤒', '生病了']];
+const STATUS_EXPIRY = [['none', '不清除'], ['30m', '30 分钟'], ['1h', '1 小时'], ['today', '今天'], ['week', '本周']];
+const expiryTime = key => {
+  const now = new Date();
+  if (key === '30m') return now.getTime() + 30 * 60000;
+  if (key === '1h') return now.getTime() + 3600000;
+  if (key === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - 1;
+  if (key === 'week') return new Date(now.getFullYear(), now.getMonth(), now.getDate() + 8 - (now.getDay() || 7)).getTime() - 1;
+  return null;
+};
+export function StatusDialog({ status, notify, onClose }) {
+  const [emoji, setEmoji] = useState(status?.emoji || '');
+  const [text, setText] = useState(status?.text || '');
+  const [expiry, setExpiry] = useState(status?.until ? 'keep' : 'none');
+  const [busy, setBusy] = useState(false);
+  async function save(next) {
+    setBusy(true);
+    try {
+      const until = next.expiry === 'keep' ? status.until : expiryTime(next.expiry);
+      await api('status', { emoji: next.emoji.trim(), text: next.text.trim(), until });
+      notify(next.emoji.trim() || next.text.trim() ? '状态已更新' : '状态已清除'); onClose();
+    } catch (error) { notify(error.message); setBusy(false); }
+  }
+  return <Modal title="设置状态" subtitle="状态会显示在你的资料卡和名字旁边。" onClose={() => !busy && onClose()}>
+    <form onSubmit={event => { event.preventDefault(); save({ emoji, text, expiry }); }}>
+      <div className="status-presets">{STATUS_PRESETS.map(([icon, label]) => <button type="button" key={label} className={emoji === icon && text === label ? 'active' : ''} onClick={() => { setEmoji(icon); setText(label); }}><span>{icon}</span>{label}</button>)}</div>
+      <div className="status-inputs"><input aria-label="状态表情" className="status-emoji-input" maxLength={8} placeholder="😀" value={emoji} onChange={event => setEmoji(event.target.value)} />
+        <input aria-label="状态文字" maxLength={40} placeholder="在忙什么？" value={text} onChange={event => setText(event.target.value)} /></div>
+      <label className="field-label" htmlFor="status-expiry">自动清除</label>
+      <select id="status-expiry" value={expiry} onChange={event => setExpiry(event.target.value)}>
+        {status?.until && <option value="keep">保持（{new Date(status.until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}）</option>}
+        {STATUS_EXPIRY.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+      <div className="modal-footer">{status && <button type="button" className="text-button danger-text folder-delete" disabled={busy} onClick={() => save({ emoji: '', text: '', expiry: 'none' })}>清除状态</button>}
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (!emoji.trim() && !text.trim())}>保存</button></div>
+    </form>
+  </Modal>;
+}
+
 // 新建或编辑会话文件夹：名称 + 勾选会话；编辑时可以删除。
 export function FolderDialog({ folder, rooms, icon, onSave, onDelete, onClose }) {
   const [name, setName] = useState(folder?.name || '');
