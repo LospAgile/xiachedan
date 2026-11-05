@@ -181,13 +181,23 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const groupSettings = room => {
     const members = JSON.parse(room.members);
     const row = stmt('SELECT * FROM room_settings WHERE room_id=?').get(room.id);
-    return { ownerId: row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null,
+    const ownerId = row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null;
+    const adminIds = stmt('SELECT user_id FROM room_admins WHERE room_id=?').all(room.id).map(item => item.user_id).filter(id => id !== ownerId && members.includes(id));
+    return { ownerId, adminIds,
       announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
   };
   const saveSettings = (roomId, change) => {
     const current = stmt('SELECT * FROM room_settings WHERE room_id=?').get(roomId) || { owner_id: null, announcement: '', announcement_at: null, announcement_by: null };
     const next = { ...current, ...change };
     stmt('INSERT OR REPLACE INTO room_settings (room_id,owner_id,announcement,announcement_at,announcement_by) VALUES (?,?,?,?,?)').run(roomId, next.owner_id, next.announcement, next.announcement_at, next.announcement_by);
+  };
+  // 群主或群管理员。
+  const requireGroupManager = (roomId, userId) => {
+    const room = requireRoom(roomId, userId);
+    if (room.kind !== 'group') throw fail('只有群聊可以这样设置');
+    const { ownerId, adminIds } = groupSettings(room);
+    if (ownerId !== userId && !adminIds.includes(userId)) throw fail('只有群主或管理员可以这样设置', 403);
+    return room;
   };
   const requireGroupOwner = (roomId, userId) => {
     const room = requireRoom(roomId, userId);
@@ -851,7 +861,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 群主改群名、写群公告（留空即撤下公告）。
   app.post('/api/room-settings', (req, res) => {
     rateLimit(req, 'room-settings', 30);
-    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
     const { name, announcement } = req.body;
     if ((name !== undefined && typeof name !== 'string') || (announcement !== undefined && typeof announcement !== 'string') || (name === undefined && announcement === undefined)) throw fail('群设置无效');
     if (name !== undefined) {
@@ -874,6 +884,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const members = JSON.parse(room.members).filter(id => id !== req.user.id);
     const ownerId = groupSettings(room).ownerId;
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
@@ -928,7 +939,34 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const target = req.body?.userId;
     if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
     saveSettings(room.id, { owner_id: target });
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
     broadcast({ type: 'rooms' }, room.id);
+    res.json({ ok: true });
+  });
+  // 群主设置或取消群管理员，最多 10 个。
+  app.post('/api/room-admins', (req, res) => {
+    const room = requireGroupOwner(req.body?.roomId, req.user.id);
+    const target = req.body?.userId;
+    if (typeof target !== 'string' || target === req.user.id || !JSON.parse(room.members).includes(target) || !userById(target)) throw fail('请选择群里的另一位成员');
+    if (req.body.admin) {
+      if (groupSettings(room).adminIds.length >= 10) throw fail('最多设置 10 位管理员');
+      stmt('INSERT OR IGNORE INTO room_admins VALUES (?,?)').run(room.id, target);
+    } else stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ adminIds: groupSettings(stmt('SELECT * FROM rooms WHERE id=?').get(room.id)).adminIds });
+  });
+  // 移出群成员：群主可以移出任何人；管理员只能移出普通成员。
+  app.post('/api/room-remove', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const { ownerId, adminIds } = groupSettings(room);
+    const target = req.body?.userId;
+    const members = JSON.parse(room.members);
+    if (typeof target !== 'string' || target === req.user.id || !members.includes(target)) throw fail('请选择群里的另一位成员');
+    if (target === ownerId || (req.user.id !== ownerId && adminIds.includes(target))) throw fail('只有群主可以移出管理员', 403);
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members.filter(id => id !== target)), room.id);
+    stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === target);
     res.json({ ok: true });
   });
   app.post('/api/room-members', (req, res) => {

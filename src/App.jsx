@@ -320,6 +320,15 @@ export default function App() {
   });
   const avatarButton = (user, children, className = 'avatar-button') => user
     ? <button type="button" className={className} data-user-id={user.id} aria-label={`查看${user.name}的资料`} {...profileClick(user)}>{children}</button> : children;
+  // 群里资料卡上的管理操作：群主能设管理员、移出任何人；管理员只能移出普通成员。
+  function groupActionsFor(user) {
+    const amOwner = groupOwner === state.me.id, targetAdmin = groupAdmins.includes(user.id), targetOwner = user.id === groupOwner;
+    const setAdmin = admin => async () => { setProfileCard(null); try { await api('room-admins', { roomId: room.id, userId: user.id, admin }); await refresh(); notify(admin ? `已把「${user.name}」设为管理员` : `已取消「${user.name}」的管理员`); } catch (error) { notify(error.message); } };
+    return [
+      ...(amOwner ? [{ label: targetAdmin ? '取消管理员' : '设为管理员', action: setAdmin(!targetAdmin) }] : []),
+      ...(!targetOwner && (amOwner || (isGroupManager && !targetAdmin)) ? [{ label: '移出群聊', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'remove', user }); } }] : []),
+    ];
+  }
   async function nudge(user) {
     try { receive((await api('nudge', { roomId: selected, userId: user.id })).message); }
     catch (error) { notify(error.message); }
@@ -545,10 +554,12 @@ export default function App() {
     </button>;
   };
   const groupOwner = room?.kind === 'group' ? room.ownerId : null;
+  const groupAdmins = room?.kind === 'group' ? room.adminIds || [] : [];
+  const isGroupManager = groupOwner === state.me.id || groupAdmins.includes(state.me.id);
   const canSetAutoDelete = room?.kind === 'direct' || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
   const canEditRoomAvatar = room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
-  const memberRow = (user, size, inGroup = false, panel = false) => <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}<StatusEmoji user={user} />{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
+  const memberRow = (user, size, inGroup = false, panel = false) => <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}<StatusEmoji user={user} />{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
@@ -660,9 +671,9 @@ export default function App() {
             {roomIcon(room, 40)}<button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => setModal('roomAvatar')}>{room.avatar ? '更换群头像' : '设置群头像'}</button>
           </div>}
           {room.kind === 'group' && <>
-            {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
+            {isGroupManager && <button className="history-entry" onClick={() => setGroupAction({ type: 'name' })}><PencilLine size={16} /><span>修改群名</span><ChevronRight size={14} /></button>}
             {groupOwner === state.me.id && <button className="history-entry" onClick={() => setGroupAction({ type: 'webhooks' })}><Bot size={16} /><span>群机器人</span><ChevronRight size={14} /></button>}
-            <section className="announcement-card" aria-label="群公告"><div className="announcement-heading"><Megaphone size={14} /><b>群公告</b>{groupOwner === state.me.id && <button className="text-button" onClick={() => setGroupAction({ type: 'announcement' })}>{room.announcement ? '编辑' : '发布'}</button>}</div>
+            <section className="announcement-card" aria-label="群公告"><div className="announcement-heading"><Megaphone size={14} /><b>群公告</b>{isGroupManager && <button className="text-button" onClick={() => setGroupAction({ type: 'announcement' })}>{room.announcement ? '编辑' : '发布'}</button>}</div>
               <p>{room.announcement?.text || '暂无公告'}</p></section>
           </>}
           {room.kind === 'public' && (isOwner || isAdmin) && <button className="history-entry" onClick={() => setGroupAction({ type: 'webhooks' })}><Bot size={16} /><span>大厅机器人</span><ChevronRight size={14} /></button>}
@@ -692,6 +703,7 @@ export default function App() {
     {profileCard && userMap[profileCard.userId] && createPortal(<ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
       onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onSetStatus={() => { setProfileCard(null); setModal('status'); }}
+      groupActions={room?.kind === 'group' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId]) : []}
       onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
       onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
@@ -717,7 +729,9 @@ export default function App() {
     {groupAction?.type === 'webhooks' && room && room.kind !== 'direct' && <WebhooksDialog room={room} notify={notify} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'name' && room?.kind === 'group' && <GroupEditDialog room={room} field="name" onClose={() => setGroupAction(null)} onSaved={refresh} />}
     {groupAction?.type === 'announcement' && room?.kind === 'group' && <GroupEditDialog room={room} field="announcement" onClose={() => setGroupAction(null)} onSaved={refresh} />}
-    {groupAction?.type === 'transfer' && room && <ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你将不能再修改群名和群公告。" confirmLabel="确认转让" busyLabel="正在转让…"
+    {groupAction?.type === 'remove' && room && <ConfirmDialog title={`把「${groupAction.user.name}」移出「${room.name}」？`} subtitle="移出后对方看不到这个群的新消息，需要重新邀请才能回来。" confirmLabel="移出" busyLabel="正在移出…" danger
+      onConfirm={async () => { await api('room-remove', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify(`已把「${groupAction.user.name}」移出群聊`); }} onClose={() => setGroupAction(null)} />}
+    {groupAction?.type === 'transfer' && room && <ConfirmDialog title={`把群主转让给「${groupAction.user.name}」？`} subtitle="转让后，你会变成普通成员，不能再设置管理员和转让群主。" confirmLabel="确认转让" busyLabel="正在转让…"
       onConfirm={async () => { await api('room-owner', { roomId: room.id, userId: groupAction.user.id }); await refresh(); notify('群主已转让'); }} onClose={() => setGroupAction(null)} />}
     {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}

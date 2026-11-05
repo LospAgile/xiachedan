@@ -411,7 +411,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [] }) {
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -463,6 +463,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
     {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
+    {groupActions.length > 0 && <div className="profile-group-actions">{groupActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
 }
 
