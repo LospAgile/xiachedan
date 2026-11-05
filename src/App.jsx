@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff, Link2, UserCheck } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor, activeStatus, StatusEmoji } from './components';
 import Onboarding from './Onboarding';
@@ -13,7 +13,7 @@ import useConversations from './useConversations';
 import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
-import { messageLink } from './markdown';
+import { messageLink, groupInviteLink } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
 import useAppearance from './appearance';
@@ -329,6 +329,22 @@ export default function App() {
       ...(!targetOwner && (amOwner || (isGroupManager && !targetAdmin)) ? [{ label: '移出群聊', danger: true, action: () => { setProfileCard(null); setGroupAction({ type: 'remove', user }); } }] : []),
     ];
   }
+  async function inviteLink(action) {
+    try {
+      const { inviteToken } = await api('room-invite', { roomId: room.id, action });
+      await refresh();
+      if (inviteToken) await copyInvite(inviteToken, action === 'create' && room.inviteToken ? '已重置，新链接已复制，旧链接失效' : '邀请链接已复制');
+      else notify('邀请链接已停用');
+    } catch (error) { notify(error.message); }
+  }
+  async function copyInvite(token, message = '邀请链接已复制') {
+    const link = `${location.origin}${location.pathname}#join-group=${encodeURIComponent(room.id)}.${token}`;
+    try { await (window.desktop?.copy ? window.desktop.copy(link) : navigator.clipboard.writeText(link)); notify(message); } catch (error) { notify(error.message); }
+  }
+  async function answerRequest(request, approve) {
+    try { await api('room-requests', { roomId: room.id, requestId: request.id, approve }); await refresh(); notify(approve ? '已同意入群' : '已拒绝申请'); }
+    catch (error) { notify(error.message); }
+  }
   async function setRoomPolicy(change) {
     try { await api('room-policy', { roomId: room.id, ...change }); await refresh(); }
     catch (error) { notify(error.message); }
@@ -435,16 +451,18 @@ export default function App() {
   useEffect(() => {
     if (!state?.me?.id) return;
     const fromAddress = () => {
-      const target = messageLink(location.href);
-      if (!target) return;
+      const target = messageLink(location.href), invite = groupInviteLink(location.href);
+      if (!target && !invite) return;
       history.replaceState(null, '', location.pathname + location.search);
-      latest.current?.openMessageLink(target);
+      if (target) latest.current?.openMessageLink(target); else latest.current?.joinGroup(invite);
     };
     const open = event => latest.current?.openMessageLink(event.detail);
+    const join = event => latest.current?.joinGroup(event.detail);
     fromAddress();
     window.addEventListener('hashchange', fromAddress);
     window.addEventListener('linliao:open-message', open);
-    return () => { window.removeEventListener('hashchange', fromAddress); window.removeEventListener('linliao:open-message', open); };
+    window.addEventListener('linliao:join-group', join);
+    return () => { window.removeEventListener('hashchange', fromAddress); window.removeEventListener('linliao:open-message', open); window.removeEventListener('linliao:join-group', join); };
   }, [state?.me?.id]);
   const recipientsCache = useRef([]);
   const messageHandlers = useMemo(() => ({
@@ -478,6 +496,13 @@ export default function App() {
   const groupMembers = !room ? [] : room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
   latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead, openProfile,
+    joinGroup: async ({ roomId, token }) => {
+      try {
+        const result = await api('room-join', { roomId, token });
+        if (result.pending) return notify('已申请加入，等待群主或管理员同意');
+        await refresh(); openRoom(result.roomId);
+      } catch (error) { notify(error.message); }
+    },
     openMessageLink: async ({ id }) => {
       try { jumpToMessage(await api(`message-location?id=${encodeURIComponent(id)}`)); } catch (error) { notify(error.message); }
     },
@@ -667,6 +692,16 @@ export default function App() {
         : panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
+          {room.kind === 'group' && isGroupManager && <>
+            <div className="history-entry policy-entry"><Link2 size={16} /><span>邀请链接<small>{room.inviteToken ? '本空间的成员点开链接即可加入' : '还没有链接'}</small></span>
+              {room.inviteToken ? <span className="invite-actions"><button type="button" className="text-button" onClick={() => copyInvite(room.inviteToken)}>复制</button><button type="button" className="text-button" onClick={() => inviteLink('create')}>重置</button><button type="button" className="text-button danger-text" onClick={() => inviteLink('disable')}>停用</button></span>
+                : <button type="button" className="text-button" onClick={() => inviteLink('create')}>生成并复制</button>}</div>
+            <div className="history-entry policy-entry"><UserCheck size={16} /><span>入群审批<small>链接加入、成员拉人都要群主或管理员同意</small></span>
+              <button type="button" role="switch" aria-label="入群审批" aria-checked={Boolean(room.joinApproval)} className={`switch ${room.joinApproval ? 'enabled' : ''}`} onClick={() => setRoomPolicy({ joinApproval: !room.joinApproval })}><i className="switch-track"><i /></i></button></div>
+            {room.joinRequests?.length > 0 && <section className="join-requests" aria-label="入群申请"><h4>入群申请 <small>{room.joinRequests.length}</small></h4>
+              {room.joinRequests.map(request => { const user = userMap[request.userId]; return <div className="join-request" key={request.id}><Avatar user={user} size={28} /><span><b>{user?.name || '成员'}</b><small>{request.invitedBy ? `${userMap[request.invitedBy]?.name || '成员'} 邀请` : '通过邀请链接'}</small></span>
+                <button type="button" className="text-button danger-text" onClick={() => answerRequest(request, false)}>拒绝</button><button type="button" className="primary-button" onClick={() => answerRequest(request, true)}>同意</button></div>; })}</section>}
+          </>}
           {room.kind === 'group' && isGroupManager && <div className="history-entry policy-entry"><MicOff size={16} /><span>全员禁言<small>只有群主和管理员可以发言</small></span>
             <button type="button" role="switch" aria-label="全员禁言" aria-checked={Boolean(room.allMuted)} className={`switch ${room.allMuted ? 'enabled' : ''}`} onClick={() => setRoomPolicy({ allMuted: !room.allMuted })}><i className="switch-track"><i /></i></button></div>}
           <label className="history-entry auto-delete-entry"><Timer size={16} /><span>自动删除消息</span>

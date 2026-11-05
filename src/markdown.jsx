@@ -21,9 +21,16 @@ export function messageLink(href) {
   const match = /^https?:\/\/[^#\s]*#msg=([^/\s#]+)\/([^/\s#]+)$/i.exec(href || '');
   try { return match ? { roomId: decodeURIComponent(match[1]), id: decodeURIComponent(match[2]) } : null; } catch { return null; }
 }
+// 群邀请链接：#join-group=群/令牌，同样只看 # 后面的部分。
+export function groupInviteLink(href) {
+  const match = /^https?:\/\/[^#\s]*#join-group=([^/\s#.]+)\.([\w-]+)$/i.exec(href || '');
+  try { return match ? { roomId: decodeURIComponent(match[1]), token: match[2] } : null; } catch { return null; }
+}
 const openMessage = (event, target) => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:open-message', { detail: target })); };
 function Link({ href, children }) {
   if (!href) return children;
+  const invite = groupInviteLink(href);
+  if (invite) return <a href={href} className="message-link" title="加入这个群聊" onClick={event => { event.preventDefault(); event.stopPropagation(); window.dispatchEvent(new CustomEvent('linliao:join-group', { detail: invite })); }}>👥 群聊邀请</a>;
   const target = messageLink(href);
   if (!target) return <a href={href} target="_blank" rel="noopener noreferrer" onClick={event => openLink(event, href)}>{children}</a>;
   const label = React.Children.toArray(children);
@@ -139,7 +146,7 @@ export function FormattedText({ text, mentions = [], nameOf, viewerId, tail = nu
 
 // 正文里第一个网页链接（代码里的不算），用来显示链接预览。
 export const firstLink = text => [...text.replace(/```[\s\S]*?(```|$)/g, '').replace(/`[^`\n]+`/g, '')
-  .matchAll(URL_PATTERN)].map(match => match[0]).find(url => !messageLink(url)) || null;
+  .matchAll(URL_PATTERN)].map(match => match[0]).find(url => !messageLink(url) && !groupInviteLink(url)) || null;
 
 const previews = new Map();
 export function LinkPreview({ url }) {

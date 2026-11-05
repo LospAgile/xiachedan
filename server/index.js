@@ -213,7 +213,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
-      avatar: roomAvatar(room.id), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+      avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
     const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
@@ -236,9 +236,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (groupMuted(room, user.id)) throw fail('全员禁言中，只有群主和管理员可以发言', 403);
   };
   const savePolicy = (roomId, change) => {
-    const current = stmt('SELECT * FROM room_group_policy WHERE room_id=?').get(roomId) || { all_muted: 0, join_approval: 0, invite_hash: null, invite_at: null };
+    const current = stmt('SELECT * FROM room_group_policy WHERE room_id=?').get(roomId) || { all_muted: 0, join_approval: 0, invite_token: null, invite_at: null };
     const next = { ...current, ...change };
-    stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_hash,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_hash, next.invite_at);
+    stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_token,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_token, next.invite_at);
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
@@ -248,6 +248,22 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const row = stmt('SELECT emoji, text, until FROM user_status WHERE user_id=?').get(id);
     return row && (!row.until || row.until > Date.now()) ? { emoji: row.emoji, text: row.text, until: row.until } : null;
   };
+  // 只给群主和管理员看的：邀请链接令牌和入群申请。
+  const managerView = (room, userId) => {
+    if (room.kind !== 'group') return {};
+    const { ownerId, adminIds } = groupSettings(room);
+    if (userId !== ownerId && !adminIds.includes(userId)) return {};
+    const policy = stmt('SELECT invite_token FROM room_group_policy WHERE room_id=?').get(room.id);
+    return { inviteToken: policy?.invite_token || null, joinRequests: stmt('SELECT id, user_id, invited_by, created_at FROM room_join_requests WHERE room_id=? ORDER BY created_at').all(room.id)
+      .map(row => ({ id: row.id, userId: row.user_id, invitedBy: row.invited_by, createdAt: row.created_at })) };
+  };
+  const addToGroup = (room, ids) => {
+    const members = [...new Set([...JSON.parse(room.members), ...ids])];
+    if (members.length > 100) throw fail('单个群聊最多 100 人');
+    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    for (const id of ids) stmt('DELETE FROM room_join_requests WHERE room_id=? AND user_id=?').run(room.id, id);
+  };
+  const requestJoin = (room, userId, invitedBy) => stmt('INSERT OR IGNORE INTO room_join_requests VALUES (?,?,?,?,?)').run(randomUUID(), room.id, userId, invitedBy, Date.now());
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
@@ -960,6 +976,44 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
   });
+  // 邀请链接：群主或管理员生成（或重置）、停用；令牌只有群主和管理员看得到。
+  app.post('/api/room-invite', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    if (!['create', 'disable'].includes(req.body.action)) throw fail('操作无效');
+    const token = req.body.action === 'create' ? randomBytes(16).toString('base64url') : null;
+    savePolicy(room.id, { invite_token: token, invite_at: token ? Date.now() : null });
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ inviteToken: token });
+  });
+  // 用邀请链接入群：空间成员都可以用；开了入群审批时先进申请。
+  app.post('/api/room-join', (req, res) => {
+    rateLimit(req, 'room-join', 20);
+    const room = typeof req.body?.roomId === 'string' && stmt("SELECT * FROM rooms WHERE id=? AND kind='group'").get(req.body.roomId);
+    const expected = room && stmt('SELECT invite_token FROM room_group_policy WHERE room_id=?').get(room.id)?.invite_token;
+    const given = typeof req.body.token === 'string' ? Buffer.from(req.body.token) : Buffer.alloc(0);
+    if (!expected || given.length !== Buffer.byteLength(expected) || !timingSafeEqual(given, Buffer.from(expected))) throw fail('邀请链接无效或已停用', 404);
+    if (JSON.parse(room.members).includes(req.user.id)) return res.json({ joined: true, roomId: room.id });
+    if (groupSettings(room).joinApproval) {
+      requestJoin(room, req.user.id, null);
+      broadcast({ type: 'rooms' }, room.id);
+      return res.json({ pending: true });
+    }
+    addToGroup(room, [req.user.id]);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
+    res.json({ joined: true, roomId: room.id });
+  });
+  // 处理入群申请：同意后加入，拒绝就删掉申请。
+  app.post('/api/room-requests', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const request = typeof req.body.requestId === 'string' && stmt('SELECT * FROM room_join_requests WHERE id=? AND room_id=?').get(req.body.requestId, room.id);
+    if (!request) throw fail('申请不存在或已处理', 404);
+    if (req.body.approve && userById(request.user_id)) addToGroup(room, [request.user_id]);
+    else stmt('DELETE FROM room_join_requests WHERE id=?').run(request.id);
+    broadcast({ type: 'rooms' }, room.id);
+    deliver({ type: 'rooms' }, socket => socket.userId === request.user_id);
+    res.json({ ok: true });
+  });
   // 全员禁言、入群审批：群主和管理员可以开关。
   app.post('/api/room-policy', (req, res) => {
     const room = requireGroupManager(req.body?.roomId, req.user.id);
@@ -1002,9 +1056,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (room.kind !== 'group') throw fail('只能向群聊邀请成员');
     const ids = Array.isArray(req.body.memberIds) ? [...new Set(req.body.memberIds)] : [];
     if (!ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string' || !userById(id))) throw fail('请选择有效成员');
-    const members = [...new Set([...JSON.parse(room.members), ...ids])];
-    if (members.length > 100) throw fail('单个群聊最多 100 人');
-    stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
+    const { ownerId, adminIds, joinApproval } = groupSettings(room);
+    // 开了入群审批时，普通成员拉的人先进申请，群主或管理员同意后才加入。
+    const fresh = ids.filter(id => !JSON.parse(room.members).includes(id));
+    if (joinApproval && req.user.id !== ownerId && !adminIds.includes(req.user.id)) {
+      for (const id of fresh) requestJoin(room, id, req.user.id);
+      broadcast({ type: 'rooms' }, room.id);
+      return res.json({ ok: true, pending: fresh.length });
+    }
+    addToGroup(room, ids);
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
   });

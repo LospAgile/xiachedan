@@ -92,7 +92,7 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
     event.preventDefault(); setBusy(true); setError('');
     try {
       const result = room ? await api('room-members', { roomId: room.id, memberIds: selected }) : await api('rooms', { name, memberIds: selected });
-      await onCreated(result.id || room.id); onClose(); notify(room ? '成员已加入群聊' : '群聊已创建');
+      await onCreated(result.id || room.id); onClose(); notify(result.pending ? '已发送入群申请，等待群主或管理员同意' : room ? '成员已加入群聊' : '群聊已创建');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
   return <Modal title={room ? `邀请成员加入${room.name}` : '把大家聚在一起'} subtitle={room ? '新成员加入后可以查看群聊历史消息。' : '创建一个群聊，让话题有自己的小天地。'} onClose={onClose}><form onSubmit={submit}>

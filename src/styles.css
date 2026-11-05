@@ -1233,5 +1233,14 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .profile-group-actions { display: flex; justify-content: center; gap: 16px; width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .profile-card .profile-group-actions button { width: auto; margin-top: 0; }
 .profile-card .dept-edit { width: auto; margin: 0 0 0 6px; padding: 0; justify-content: flex-start; }
-.policy-entry span { display: flex; flex-direction: column; }
+.policy-entry > span:not(.invite-actions) { display: flex; flex-direction: column; }
 .policy-entry span small { font-size: 11px; color: var(--text-2); font-weight: 400; }
+.invite-actions { display: flex; gap: 8px; }
+.invite-actions .text-button, .policy-entry > .text-button { font-size: 12px; }
+.join-requests { margin: 4px 0 8px; padding: 8px; border-radius: 12px; background: var(--fill-1); }
+.join-requests h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.join-request { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.join-request > span:not(.avatar) { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.join-request small { font-size: 11px; color: var(--text-2); }
+.join-request .primary-button { min-height: 28px; padding: 0 10px; font-size: 12px; }
+.invite-actions { flex: none; }
