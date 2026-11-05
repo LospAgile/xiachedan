@@ -183,7 +183,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const row = stmt('SELECT * FROM room_settings WHERE room_id=?').get(room.id);
     const ownerId = row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null;
     const adminIds = stmt('SELECT user_id FROM room_admins WHERE room_id=?').all(room.id).map(item => item.user_id).filter(id => id !== ownerId && members.includes(id));
-    return { ownerId, adminIds,
+    const policy = stmt('SELECT all_muted, join_approval FROM room_group_policy WHERE room_id=?').get(room.id);
+    return { ownerId, adminIds, allMuted: Boolean(policy?.all_muted), joinApproval: Boolean(policy?.join_approval),
       announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
   };
   const saveSettings = (roomId, change) => {
@@ -223,6 +224,21 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const requireVoice = user => {
     const until = muteOf(user.id);
     if (until) throw fail(until === Infinity ? '你已被管理员禁言' : `你已被管理员禁言，${new Date(until).toLocaleString('zh-CN', { hour12: false })} 后恢复`, 403);
+  };
+  // 群里开了全员禁言时，只有群主和管理员可以发言。
+  const groupMuted = (room, userId) => {
+    if (room?.kind !== 'group') return false;
+    const { ownerId, adminIds, allMuted } = groupSettings(room);
+    return allMuted && userId !== ownerId && !adminIds.includes(userId);
+  };
+  const requireRoomVoice = (room, user) => {
+    requireVoice(user);
+    if (groupMuted(room, user.id)) throw fail('全员禁言中，只有群主和管理员可以发言', 403);
+  };
+  const savePolicy = (roomId, change) => {
+    const current = stmt('SELECT * FROM room_group_policy WHERE room_id=?').get(roomId) || { all_muted: 0, join_approval: 0, invite_hash: null, invite_at: null };
+    const next = { ...current, ...change };
+    stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_hash,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_hash, next.invite_at);
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
@@ -665,6 +681,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireVoice(req.user);
     rateLimit(req, 'forward', 20);
     const target = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(target, req.user);
     const ids = req.body?.messageIds;
     if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => typeof id !== 'string' || !id || id.length > 100)) throw fail('请选择要转发的消息');
     const unique = [...new Set(ids)];
@@ -943,6 +960,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
   });
+  // 全员禁言、入群审批：群主和管理员可以开关。
+  app.post('/api/room-policy', (req, res) => {
+    const room = requireGroupManager(req.body?.roomId, req.user.id);
+    const { allMuted, joinApproval } = req.body;
+    if ((allMuted !== undefined && typeof allMuted !== 'boolean') || (joinApproval !== undefined && typeof joinApproval !== 'boolean') || (allMuted === undefined && joinApproval === undefined)) throw fail('群设置无效');
+    savePolicy(room.id, { ...(allMuted !== undefined ? { all_muted: allMuted ? 1 : 0 } : {}), ...(joinApproval !== undefined ? { join_approval: joinApproval ? 1 : 0 } : {}) });
+    broadcast({ type: 'rooms' }, room.id);
+    const { allMuted: muted, joinApproval: approval } = groupSettings(room);
+    res.json({ allMuted: muted, joinApproval: approval });
+  });
   // 群主设置或取消群管理员，最多 10 个。
   app.post('/api/room-admins', (req, res) => {
     const room = requireGroupOwner(req.body?.roomId, req.user.id);
@@ -1019,6 +1046,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/scheduled', (req, res) => {
     rateLimit(req, 'scheduled', 20);
     const room = requireRoom(req.body?.roomId, req.user.id);
+    requireRoomVoice(room, req.user);
     const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (!text || text.length > 10000) throw fail('请输入 1–10000 个字的消息');
     const sendAt = timeValue(req.body.sendAt);
@@ -1097,7 +1125,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
       stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
       const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id)) continue;
+      if (!canAccess(room, row.sender_id) || muteOf(row.sender_id) || groupMuted(room, row.sender_id)) continue;
       const id = randomUUID();
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, row.sender_id, row.text, '[]', `scheduled:${row.id}`, Date.now());
       broadcast({ type: 'message', message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } }, room.id);
@@ -1116,7 +1144,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/polls', (req, res) => {
     rateLimit(req, 'polls', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
-    requireVoice(req.user);
+    requireRoomVoice(room, req.user);
     const question = textValue(req.body?.question, 200);
     const options = Array.isArray(req.body?.options) ? req.body.options.map(option => textValue(option, 100)).filter(Boolean) : [];
     if (!question) throw fail('请输入投票问题');
@@ -1415,7 +1443,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/messages', (req, res) => {
     rateLimit(req, 'messages', 120);
     const room = requireRoom(req.body.roomId, req.user.id);
-    requireVoice(req.user);
+    requireRoomVoice(room, req.user);
     const clientId = textValue(req.body.clientId, 80);
     if (!clientId) throw fail('消息标识缺失，请重试');
     const existing = stmt('SELECT * FROM messages WHERE sender_id=? AND client_id=?').get(req.user.id, clientId);
@@ -1482,7 +1510,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.post('/api/nudge', (req, res) => {
     rateLimit(req, 'nudge', 10);
     const room = requireRoom(req.body?.roomId, req.user.id);
-    requireVoice(req.user);
+    requireRoomVoice(room, req.user);
     const target = typeof req.body.userId === 'string' && userById(req.body.userId);
     if (!target || !canAccess(room, target.id)) throw fail('只能拍会话里的成员');
     const id = randomUUID();

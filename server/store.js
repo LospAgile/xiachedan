@@ -80,6 +80,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS room_avatars (room_id TEXT PRIMARY KEY, upload_id TEXT NOT NULL);
     -- 名字颜色：每人在 7 种昵称色里自选一种（编号 0–6），没选时按身份自动分配。
     CREATE TABLE IF NOT EXISTS user_name_colors (user_id TEXT PRIMARY KEY, color INTEGER NOT NULL);
+    -- 群策略：全员禁言、入群审批、邀请链接（令牌只存哈希，启用后才能用链接入群）。
+    CREATE TABLE IF NOT EXISTS room_group_policy (room_id TEXT PRIMARY KEY, all_muted INTEGER NOT NULL DEFAULT 0, join_approval INTEGER NOT NULL DEFAULT 0, invite_hash TEXT, invite_at INTEGER);
     -- 群管理员：由群主指定，可以改群名和公告、移出普通成员。
     CREATE TABLE IF NOT EXISTS room_admins (room_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
     -- 自定义状态：一个表情加一段文字，until 到期后不再显示（为空表示不自动清除）。

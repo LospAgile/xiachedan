@@ -1233,3 +1233,5 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .profile-group-actions { display: flex; justify-content: center; gap: 16px; width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .profile-card .profile-group-actions button { width: auto; margin-top: 0; }
 .profile-card .dept-edit { width: auto; margin: 0 0 0 6px; padding: 0; justify-content: flex-start; }
+.policy-entry span { display: flex; flex-direction: column; }
+.policy-entry span small { font-size: 11px; color: var(--text-2); font-weight: 400; }
