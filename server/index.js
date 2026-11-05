@@ -216,11 +216,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
+  const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -719,6 +720,38 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     res.json(event);
   });
   // 给别人写备注：只存给自己看，空白表示删除；同步到自己的其他设备。
+  // 会话文件夹：只存自己能访问的会话；改动推给自己的其他设备。
+  const folderInput = req => {
+    const name = textValue(req.body?.name, 12);
+    if (!name) throw fail('请填写文件夹名称');
+    if (!Array.isArray(req.body.roomIds) || req.body.roomIds.length > 200) throw fail('请选择会话');
+    const allowed = new Set(roomsFor(req.user.id).map(room => room.id));
+    return { name, roomIds: [...new Set(req.body.roomIds)].filter(id => typeof id === 'string' && allowed.has(id)) };
+  };
+  const pushFolders = userId => deliver({ type: 'folders', folders: foldersFor(userId) }, socket => socket.userId === userId);
+  app.post('/api/folders', (req, res) => {
+    rateLimit(req, 'folders', 30);
+    const { name, roomIds } = folderInput(req);
+    if (stmt('SELECT COUNT(*) AS count FROM user_folders WHERE user_id=?').get(req.user.id).count >= 10) throw fail('最多建 10 个文件夹');
+    stmt('INSERT INTO user_folders VALUES (?,?,?,?,?)').run(randomUUID(), req.user.id, name, JSON.stringify(roomIds), Date.now());
+    pushFolders(req.user.id);
+    res.status(201).json({ folders: foldersFor(req.user.id) });
+  });
+  app.post('/api/folders/update', (req, res) => {
+    rateLimit(req, 'folders', 30);
+    const row = typeof req.body?.id === 'string' && stmt('SELECT * FROM user_folders WHERE id=? AND user_id=?').get(req.body.id, req.user.id);
+    if (!row) throw fail('文件夹不存在', 404);
+    const { name, roomIds } = folderInput(req);
+    stmt('UPDATE user_folders SET name=?, room_ids=? WHERE id=?').run(name, JSON.stringify(roomIds), row.id);
+    pushFolders(req.user.id);
+    res.json({ folders: foldersFor(req.user.id) });
+  });
+  app.post('/api/folders/delete', (req, res) => {
+    const removed = typeof req.body?.id === 'string' && stmt('DELETE FROM user_folders WHERE id=? AND user_id=?').run(req.body.id, req.user.id).changes;
+    if (!removed) throw fail('文件夹不存在', 404);
+    pushFolders(req.user.id);
+    res.json({ folders: foldersFor(req.user.id) });
+  });
   app.post('/api/user-note', (req, res) => {
     rateLimit(req, 'notes', 60);
     const id = req.body?.userId;

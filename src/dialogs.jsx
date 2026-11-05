@@ -129,6 +129,35 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
   </form></Modal>;
 }
 
+// 新建或编辑会话文件夹：名称 + 勾选会话；编辑时可以删除。
+export function FolderDialog({ folder, rooms, icon, onSave, onDelete, onClose }) {
+  const [name, setName] = useState(folder?.name || '');
+  const [chosen, setChosen] = useState(() => new Set(folder?.roomIds || []));
+  const [search, setSearch] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const shown = rooms.filter(room => room.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const toggle = id => setChosen(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  async function run(action) {
+    setBusy(true); setError('');
+    try { await action(); onClose(); } catch (failure) { setError(failure.message); setBusy(false); }
+  }
+  return <Modal title={folder ? '编辑文件夹' : '新建文件夹'} subtitle="在会话列表上方按文件夹查看会话，会同步到你的其他设备。" onClose={() => !busy && onClose()}>
+    <form onSubmit={event => { event.preventDefault(); run(() => onSave(name.trim(), [...chosen])); }}>
+      <label className="field-label" htmlFor="folder-name">名称</label>
+      <input id="folder-name" autoFocus maxLength={12} required placeholder="例如：项目、家人" value={name} onChange={event => setName(event.target.value)} />
+      <label className="field-label">会话 <small>已选 {chosen.size} 个</small></label>
+      <div className="search-input"><Search size={16} /><input placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+      <div className="member-picker">{shown.map(room => <label className="member-option" key={room.id}>
+        <input type="checkbox" checked={chosen.has(room.id)} onChange={() => toggle(room.id)} />{icon(room)}<span>{room.name}</span>
+        <span className={`selection-check ${chosen.has(room.id) ? 'checked' : ''}`}>{chosen.has(room.id) && <Check size={13} />}</span></label>)}</div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="modal-footer">{folder && <button type="button" className="text-button danger-text folder-delete" disabled={busy} onClick={() => run(onDelete)}>删除文件夹</button>}
+        <button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !name.trim()}>{busy ? '正在保存…' : '保存'}</button></div>
+    </form>
+  </Modal>;
+}
+
 // 快捷键一览（⌘/ 打开）。Windows 上 ⌘ 显示为 Ctrl。
 export function ShortcutsDialog({ sendKey, onClose }) {
   const mod = modKey, mac = modKey === '⌘', shift = mac ? '⇧' : 'Shift', alt = mac ? '⌥' : 'Alt';

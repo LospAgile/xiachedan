@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, BundleDialog } from './dialogs';
+import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, FolderDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -71,6 +71,10 @@ export default function App() {
   const [readDetail, setReadDetail] = useState(null);
   const [profileCard, setProfileCard] = useState(null);
   const [draftTexts, setDraftTexts] = useState({});
+  // 会话列表上方的分组标签：全部 / 未读 / 群聊 / 私聊 / 自建文件夹；停在哪个标签只记在本机。
+  const [folderTab, setFolderTab] = useState(() => localStorage.getItem('linliao.folderTab') || 'all');
+  const [editingFolder, setEditingFolder] = useState(null);
+  const chooseFolderTab = id => { setFolderTab(id); try { localStorage.setItem('linliao.folderTab', id); } catch {} };
   const [historyFor, setHistoryFor] = useState(null);
   // 撤回后可以「重新编辑」：原文只在本机内存里保留 10 分钟，用过一次就丢弃。
   const [recalledTexts, setRecalledTexts] = useState({});
@@ -110,7 +114,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction, reorder: reorderPinned } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
@@ -407,6 +411,8 @@ export default function App() {
   }
   // 长会话里每次更新只重渲染有变化的消息：传给 Message 的回调保持同一引用，调用时再取最新的状态和处理函数。
   const latest = useRef(null);
+  // 切换标签或文件夹变化时，把选中的标签滚到可见位置。
+  useEffect(() => { document.querySelector('.folder-tabs .active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [folderTab, state?.folders?.length]);
   // 点聊天里的消息链接，或从外部打开带 #msg= 的地址：查到所在位置后跳过去。
   useEffect(() => {
     if (!state?.me?.id) return;
@@ -466,7 +472,26 @@ export default function App() {
   const recipientIds = groupMembers.filter(user => user.id !== state.me.id).map(user => user.id);
   if (recipientIds.join() !== recipientsCache.current.join()) recipientsCache.current = recipientIds;
   const query = search.trim().toLowerCase();
-  const filtered = rooms.filter(room => (!room.hidden || query) && room.name.toLowerCase().includes(query));
+  const folders = state.folders || [];
+  const activeFolder = folders.find(folder => folder.id === folderTab);
+  const tabKey = ['all', 'unread', 'groups', 'direct'].includes(folderTab) || activeFolder ? folderTab : 'all';
+  const roomUnread = room => Boolean(unread[room.id]?.hasUnread || room.markedUnread);
+  const inTab = (room, key = tabKey) => key === 'unread' ? roomUnread(room) : key === 'groups' ? room.kind !== 'direct' : key === 'direct' ? room.kind === 'direct'
+    : key === 'all' ? true : Boolean(folders.find(folder => folder.id === key)?.roomIds.includes(room.id));
+  const folderTabs = [['all', '全部'], ['unread', '未读'], ['groups', '群聊'], ['direct', '私聊'], ...folders.map(folder => [folder.id, folder.name])]
+    .map(([id, label]) => ({ id, label, unread: id === 'all' ? 0 : rooms.filter(room => !room.hidden && inTab(room, id) && roomUnread(room)).length }));
+  const filtered = rooms.filter(room => (!room.hidden || query) && room.name.toLowerCase().includes(query) && (query || inTab(room)));
+  const showGroupSection = ['all', 'groups'].includes(tabKey) || filtered.some(room => !room.pinned && room.kind !== 'direct');
+  const showDirectSection = ['all', 'direct'].includes(tabKey) || filtered.some(room => !room.pinned && room.kind === 'direct');
+  async function saveFolder(folder, name, roomIds) {
+    const result = await api(folder ? 'folders/update' : 'folders', { ...(folder ? { id: folder.id } : {}), name, roomIds });
+    applyFolders(result.folders);
+    if (!folder) chooseFolderTab(result.folders.at(-1).id);
+  }
+  async function deleteFolder(folder) {
+    applyFolders((await api('folders/delete', { id: folder.id })).folders);
+    chooseFolderTab('all');
+  }
   const peer = room?.kind === 'direct' ? peerOf(room) : null;
   // 与侧栏顺序一致：置顶、群聊、私聊（已移除的对话不在内）；⌘1–9 按这个顺序切换。
   const visible = rooms.filter(target => !target.hidden);
@@ -541,11 +566,16 @@ export default function App() {
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
       <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
+      {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
+        {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
+        {activeFolder && <IconButton icon={PencilLine} label="编辑这个文件夹" size={14} onClick={() => setEditingFolder(activeFolder)} />}
+        <IconButton icon={FolderPlus} label="新建文件夹" size={14} onClick={() => setEditingFolder('new')} /></div>}
       <nav className="conversation-scroll" aria-label="会话">
-        {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{(() => { const pinnedRooms = filtered.filter(room => room.pinned), ids = query ? undefined : pinnedRooms.map(room => room.id); return pinnedRooms.map(target => roomButton(target, ids)); })()}</>}
-        <div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => !room.pinned && room.kind !== 'direct').map(roomButton)}
-        <div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => setModal('members')} /></div>{filtered.filter(room => !room.pinned && room.kind === 'direct').map(roomButton)}
-        {!filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : '找到一位同事，聊点新鲜事。'}</p>}
+        {filtered.some(room => room.pinned) && <><div className="section-label"><span>置顶</span></div>{(() => { const pinnedRooms = filtered.filter(room => room.pinned), ids = query || tabKey !== 'all' ? undefined : pinnedRooms.map(room => room.id); return pinnedRooms.map(target => roomButton(target, ids)); })()}</>}
+        {showGroupSection && <><div className="section-label"><span>群聊</span><IconButton icon={Plus} label="新建群聊" size={15} onClick={() => setModal('group')} /></div>{filtered.filter(room => !room.pinned && room.kind !== 'direct').map(roomButton)}</>}
+        {showDirectSection && <><div className="section-label"><span>私聊</span><IconButton icon={Plus} label="发起私聊" size={15} onClick={() => setModal('members')} /></div>{filtered.filter(room => !room.pinned && room.kind === 'direct').map(roomButton)}</>}
+        {!query && !['all', 'groups', 'direct'].includes(tabKey) && !filtered.length && <p className="sidebar-empty">{tabKey === 'unread' ? '没有未读的会话。' : '这个文件夹里还没有会话，点上方的编辑按钮添加。'}</p>}
+        {['all', 'direct'].includes(tabKey) && !filtered.some(room => room.kind === 'direct') && <p className="sidebar-empty">{search ? '没有匹配的私聊' : '找到一位同事，聊点新鲜事。'}</p>}
         {searchTerm && <section className="sidebar-messages" aria-label="消息搜索结果" aria-live="polite"><div className="section-label"><span>消息</span></div>
           {globalSearch.results?.map(message => { const target = rooms.find(item => item.id === message.roomId); if (!target) return null;
             const sender = message.senderId === state.me.id ? '我' : userMap[message.senderId]?.name || '成员';
@@ -669,6 +699,8 @@ export default function App() {
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
+    {editingFolder && <FolderDialog folder={editingFolder === 'new' ? null : editingFolder} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 28)}
+      onSave={(name, roomIds) => saveFolder(editingFolder === 'new' ? null : editingFolder, name, roomIds)} onDelete={() => deleteFolder(editingFolder)} onClose={() => setEditingFolder(null)} />}
     {modal === 'shortcuts' && <ShortcutsDialog sendKey={chatPrefs.sendKey} onClose={() => setModal(null)} />}
     {historyFor && <EditHistoryDialog message={historyFor} onClose={() => setHistoryFor(null)} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => {

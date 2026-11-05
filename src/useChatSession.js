@@ -160,6 +160,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       title: title.slice(0, 120), body: hidden ? '****' : message.nudge ? '拍了拍你' : previewText(message).slice(0, 240),
     }).then(shown => { if (!(shown && window.desktop.platform === 'windows')) ring(); }).catch(error => notify(error.message));
   }, [notify, syncHistory, privacyRef]);
+  // 会话文件夹（跨设备同步）。
+  const applyFolders = useCallback(folders => setState(previous => previous ? { ...previous, folders } : previous), []);
   // 自己写的成员备注（只有自己看得到）：空字符串表示删除。
   const applyNote = useCallback(({ userId, note }) => setState(previous => {
     if (!previous) return previous;
@@ -212,6 +214,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);
         if (data.type === 'saved') setSavedVersion(version => version + 1);
         if (data.type === 'user-note') applyNote(data);
+        if (data.type === 'folders') applyFolders(data.folders);
         if (data.type === 'message-poll') applyPoll(data);
         if (data.type === 'message-thread') {
           setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].map(message => message.id === data.rootId ? { ...message, thread: data.thread } : message) } : previous);
@@ -229,7 +232,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     connect();
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -270,5 +273,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders };
 }
