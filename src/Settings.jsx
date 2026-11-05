@@ -7,6 +7,8 @@ import { JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
 import { ACCENTS, FONT_SIZES } from './appearance';
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
+import { modKey } from './chatPrefs';
+import { playMessageSound } from './sound';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
@@ -49,9 +51,16 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
       <p className="inline-note">{chatPrefs.avatarMode === 'top' ? '头像对齐一组连续消息的第一条，不随滚动移动。' : '一组连续消息很长时，头像贴着可视区底部跟随滚动（Telegram 式）。'}</p>
       <SettingRow title="群聊中显示自己的头像和名字"><Switch label="群聊中显示自己的头像和名字" checked={chatPrefs.showSelfInGroups} onChange={value => onChatPrefs({ showSelfInGroups: value })} /></SettingRow>
       <SettingRow title="私聊中显示双方的头像和名字"><Switch label="私聊中显示双方的头像和名字" checked={chatPrefs.showBothInDirect} onChange={value => onChatPrefs({ showBothInDirect: value })} /></SettingRow>
+      <h4>发送消息</h4>
+      <div className="segmented-control" role="radiogroup" aria-label="发送键">{[['enter', 'Enter 发送'], ['mod-enter', `${modKey} Enter 发送`]].map(([value, label]) =>
+        <button type="button" key={value} role="radio" aria-checked={chatPrefs.sendKey === value} className={chatPrefs.sendKey === value ? 'active' : ''} onClick={() => onChatPrefs({ sendKey: value })}>{label}</button>)}</div>
+      <p className="inline-note">{chatPrefs.sendKey === 'enter' ? 'Shift + Enter 换行；在 ``` 代码块里回车也是换行。' : `Enter 换行，${modKey} + Enter 发送，适合经常写长消息。`}</p>
     </>,
     notifications: <>
       {window.desktop?.getState && <DesktopSettings notify={notify} />}
+      {chatPrefs && <SettingRow title="新消息提示音" description="正在看的会话、免打扰会话和勿扰时段内不响。">
+        <button type="button" className="text-button" onClick={() => playMessageSound({ force: true })}>试听</button>
+        <Switch label="新消息提示音" checked={chatPrefs.sound} onChange={value => onChatPrefs({ sound: value })} /></SettingRow>}
       <QuietSettings notify={notify} />
     </>,
     privacy: <>

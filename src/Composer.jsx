@@ -5,10 +5,11 @@ import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
 import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
+import { isSendKey, modKey } from './chatPrefs';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter' }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -234,12 +235,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
           if (event.key === 'Escape' && reply) { event.preventDefault(); onCancelReply?.(); }
           // 输入框为空时按 ↑ 编辑自己最近发的一条消息。
           if (event.key === 'ArrowUp' && !editing && !draft.text && !draft.files.length && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onEditLast?.(); }
-          // 在没闭合的 ``` 代码块里回车是换行；闭合后回车照常发送。
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229 && !insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart)) { event.preventDefault(); send(); }
+          // Enter 发送模式下，在没闭合的 ``` 代码块里回车是换行；⌘Enter 发送模式下回车本来就是换行。
+          if (isSendKey(event, sendKey) && !(sendKey === 'enter' && insideCodeFence(event.currentTarget.value, event.currentTarget.selectionStart))) { event.preventDefault(); send(); }
         }} />
       <IconButton icon={Smile} label="表情" className={`emoji-button ${emojiOpen ? 'selected' : ''}`} aria-expanded={emojiOpen} disabled={sending} onClick={() => setEmojiOpen(value => !value)} />
     </div>
-    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? 'Enter 保存 · Esc 取消' : 'Enter 发送 · Shift + Enter 换行 · 输入 / 插入格式，支持 Markdown'}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
+    <button className="send-button round-button" onClick={send} disabled={!ready} aria-label={editing ? '保存修改' : '发送消息'} title={editing ? `${sendKey === 'enter' ? 'Enter' : `${modKey} Enter`} 保存 · Esc 取消` : `${sendKey === 'enter' ? 'Enter 发送 · Shift + Enter 换行' : `${modKey} Enter 发送 · Enter 换行`} · 输入 / 插入格式，支持 Markdown`}>{sending ? <LoaderCircle size={19} className="spin" /> : <ArrowUp size={19} strokeWidth={2.2} />}</button>
     <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,.mov" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     <input ref={fileInput} type="file" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ''; }} />
     </div>
