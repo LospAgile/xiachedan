@@ -113,15 +113,20 @@ function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
   const mine = poll.options.map((option, index) => option.voters.includes(viewerId) ? index : -1).filter(index => index >= 0);
   const voters = new Set(poll.options.flatMap(option => option.voters));
   const top = Math.max(1, ...poll.options.map(option => option.voters.length));
-  const toggle = index => onVote?.(message, poll.multiple ? (mine.includes(index) ? mine.filter(item => item !== index) : [...mine, index]) : (mine.includes(index) ? [] : [index]));
+  // 投过票就不能再改：单选点一下就投；多选先勾好再点「投票」。
+  const voted = mine.length > 0, locked = voted || Boolean(poll.closedAt);
+  const [picked, setPicked] = useState([]);
+  const toggle = index => { if (locked) return; if (poll.multiple) setPicked(previous => previous.includes(index) ? previous.filter(item => item !== index) : [...previous, index]); else onVote?.(message, [index]); };
+  const marked = index => voted ? mine.includes(index) : picked.includes(index);
   return <div className="poll-card">
     <div className="poll-question">{message.text}</div>
     <small className="poll-kind">{poll.closedAt ? '投票已结束' : poll.multiple ? '多选投票' : '单选投票'}</small>
-    {poll.options.map((option, index) => <button type="button" key={index} className={`poll-option ${mine.includes(index) ? 'chosen' : ''}`} disabled={Boolean(poll.closedAt)} aria-pressed={mine.includes(index)}
+    {poll.options.map((option, index) => <button type="button" key={index} className={`poll-option ${marked(index) ? 'chosen' : ''}`} disabled={locked} aria-pressed={marked(index)}
       title={option.voters.map(id => id === viewerId ? '我' : nameOf?.(id) || '成员').join('、') || '还没有人选'} onClick={() => toggle(index)}>
-      <i style={{ transform: `scaleX(${option.voters.length / top})` }} aria-hidden="true" /><span>{mine.includes(index) && <Check size={13} />}{option.text}</span><b>{option.voters.length}</b>
+      <i style={{ transform: `scaleX(${option.voters.length / top})` }} aria-hidden="true" /><span>{marked(index) && <Check size={13} />}{option.text}</span><b>{option.voters.length}</b>
     </button>)}
-    <div className="poll-footer"><span>{voters.size} 人参与</span>{onClosePoll && !poll.closedAt && <button type="button" className="text-button" onClick={() => onClosePoll(message)}>结束投票</button>}</div>
+    {poll.multiple && !locked && <button type="button" className="secondary-button poll-submit" disabled={!picked.length} onClick={() => onVote?.(message, picked)}>{picked.length ? `投票（已选 ${picked.length} 项）` : '选好后投票'}</button>}
+    <div className="poll-footer"><span>{voters.size} 人参与{voted && ' · 你已投票'}</span>{onClosePoll && !poll.closedAt && <button type="button" className="text-button" onClick={() => onClosePoll(message)}>结束投票</button>}</div>
   </div>;
 }
 

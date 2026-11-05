@@ -1114,9 +1114,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const count = JSON.parse(poll.options).length;
     const choices = Array.isArray(req.body?.options) ? [...new Set(req.body.options)] : null;
     if (!choices || choices.some(index => !Number.isInteger(index) || index < 0 || index >= count) || (!poll.multiple && choices.length > 1)) throw fail('选项无效');
+    if (!choices.length) throw fail('请选择选项');
+    // 投过票就不能再改。
+    if (stmt('SELECT 1 FROM poll_votes WHERE message_id=? AND user_id=?').get(row.id, req.user.id)) throw fail('已经投过票，不能更改');
     db.exec('BEGIN');
     try {
-      stmt('DELETE FROM poll_votes WHERE message_id=? AND user_id=?').run(row.id, req.user.id);
       for (const index of choices) stmt('INSERT INTO poll_votes VALUES (?,?,?,?)').run(row.id, req.user.id, index, Date.now());
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
