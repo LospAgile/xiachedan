@@ -1178,3 +1178,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .folder-tabs [role="tab"].active .folder-unread { background: rgba(255, 255, 255, .28); color: #fff; }
 .folder-bar .icon-button { flex: none; }
 .folder-delete { margin-right: auto; }
+
+/* 关键词提醒 */
+.keyword-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding: 6px; border-radius: 10px; background: var(--fill-1); }
+.keyword-chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; background: var(--accent); color: #fff; font-size: 12px; }
+.keyword-chip button { display: inline-flex; padding: 3px; border-radius: 50%; color: inherit; }
+.keyword-chips input { flex: 1; min-width: 140px; height: 26px; padding: 0 6px; border: 0; background: none; box-shadow: none; }

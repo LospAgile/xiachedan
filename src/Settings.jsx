@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, X, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
 import { api, formatSize } from './api';
 import { FormattedText } from './markdown';
 import { Avatar, Modal } from './components';
@@ -23,7 +23,7 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts }) {
+export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -63,6 +63,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
         <button type="button" className="text-button" onClick={() => playMessageSound({ force: true })}>试听</button>
         <Switch label="新消息提示音" checked={chatPrefs.sound} onChange={value => onChatPrefs({ sound: value })} /></SettingRow>}
       <QuietSettings notify={notify} />
+      {onKeywords && <KeywordSettings keywords={keywords} onChange={onKeywords} notify={notify} />}
     </>,
     privacy: <>
       <SettingRow title="隐私模式" description="隐藏聊天内容，鼠标停留在消息上才显示并计为已读；也可以按 ⌘⇧P 切换。"><Switch label="隐私模式" checked={privateMode} onChange={onPrivateMode} /></SettingRow>
@@ -169,6 +170,23 @@ const releaseNotes = notes => {
   }
   return lines.join('\n');
 };
+
+// 关键词提醒：消息里出现这些词时像被 @ 一样提醒（免打扰的会话也会提醒），在所有设备上生效。
+function KeywordSettings({ keywords, onChange, notify }) {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(next) {
+    setBusy(true);
+    try { await onChange(next); setInput(''); } catch (error) { notify(error.message); } finally { setBusy(false); }
+  }
+  const add = () => { const word = input.trim(); if (word && !keywords.includes(word)) save([...keywords, word]); else setInput(''); };
+  return <section className="keyword-settings"><h4>关键词提醒</h4>
+    <p className="inline-note">别人的消息里出现这些词时，像被 @ 一样提醒你，免打扰的会话也会提醒。</p>
+    <div className="keyword-chips">{keywords.map(word => <span key={word} className="keyword-chip">{word}<button type="button" aria-label={`删除关键词 ${word}`} disabled={busy} onClick={() => save(keywords.filter(item => item !== word))}><X size={12} /></button></span>)}
+      <input aria-label="添加关键词" placeholder={keywords.length ? '再加一个' : '输入关键词后回车，如：上线'} maxLength={20} value={input} disabled={busy || keywords.length >= 20}
+        onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); add(); } }} /></div>
+  </section>;
+}
 
 // 勿扰：每天的固定时段，或临时暂停一阵子；只影响这台设备的系统通知，消息照常收到、未读照常计数。
 function QuietSettings({ notify }) {

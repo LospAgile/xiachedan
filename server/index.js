@@ -217,11 +217,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
+  const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
   const stateFor = user => {
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -729,6 +730,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { name, roomIds: [...new Set(req.body.roomIds)].filter(id => typeof id === 'string' && allowed.has(id)) };
   };
   const pushFolders = userId => deliver({ type: 'folders', folders: foldersFor(userId) }, socket => socket.userId === userId);
+  // 关键词提醒：最多 20 个，每个 1–20 个字，去重；推给自己的其他设备。
+  app.post('/api/keywords', (req, res) => {
+    rateLimit(req, 'keywords', 30);
+    if (!Array.isArray(req.body?.keywords)) throw fail('关键词格式无效');
+    const keywords = [...new Set(req.body.keywords.map(word => textValue(word, 40)).filter(Boolean))];
+    if (keywords.length > 20) throw fail('最多设置 20 个关键词');
+    if (keywords.some(word => word.length > 20)) throw fail('每个关键词最多 20 个字');
+    stmt('INSERT INTO user_keywords VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET keywords=excluded.keywords').run(req.user.id, JSON.stringify(keywords));
+    deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
+    res.json({ keywords });
+  });
   app.post('/api/folders', (req, res) => {
     rateLimit(req, 'folders', 30);
     const { name, roomIds } = folderInput(req);
