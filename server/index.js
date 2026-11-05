@@ -202,7 +202,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
       members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
-      avatar: roomAvatar(room.id), ...(room.kind === 'group' ? groupSettings(room) : {}) }));
+      avatar: roomAvatar(room.id), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
     const row = stmt('SELECT until FROM member_mutes WHERE user_id=?').get(id);
@@ -984,17 +984,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
   const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
-  const purgeExpired = () => {
-    const days = retentionDays();
-    if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
-    retentionCheckedAt = Date.now();
-    const rows = stmt('SELECT id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000)
-      .map(row => ({ ...row, attachments: JSON.stringify([...JSON.parse(row.attachments), ...JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments)]) }));
+  // 删除一批消息：附件、所有关联数据一起清掉，再通知各会话的成员。
+  const deleteMessages = rows => {
     if (!rows.length) return 0;
     db.exec('BEGIN');
     try {
       for (const row of rows) {
-        for (const file of JSON.parse(row.attachments)) for (const id of [file.id, file.thumbId].filter(Boolean)) {
+        const files = [...JSON.parse(row.attachments), ...JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments)];
+        for (const file of files) for (const id of [file.id, file.thumbId].filter(Boolean)) {
           stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(id);
           stmt('DELETE FROM uploads WHERE id=?').run(id);
           stmt('DELETE FROM upload_thumbnails WHERE upload_id=?').run(id);
@@ -1008,12 +1005,31 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     cleanFiles();
-    if (rows.length === 500) retentionCheckedAt = 0;
+    const byRoom = Map.groupBy(rows, row => row.room_id);
+    for (const [roomId, items] of byRoom) broadcast({ type: 'messages-deleted', roomId, ids: items.map(item => item.id) }, roomId);
     return rows.length;
+  };
+  const purgeExpired = () => {
+    const days = retentionDays();
+    if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
+    retentionCheckedAt = Date.now();
+    const count = deleteMessages(stmt('SELECT id, room_id, attachments FROM messages WHERE created_at<? ORDER BY seq LIMIT 500').all(Date.now() - days * 86400000));
+    if (count === 500) retentionCheckedAt = 0;
+    return count;
+  };
+  // 按会话自动删除：每分钟检查一次，每次最多 500 条。
+  let autoDeleteCheckedAt = 0;
+  const purgeAutoDelete = () => {
+    if (Date.now() - autoDeleteCheckedAt < 60000) return 0;
+    autoDeleteCheckedAt = Date.now();
+    const count = deleteMessages(stmt('SELECT m.id, m.room_id, m.attachments FROM messages m JOIN room_auto_delete a ON a.room_id=m.room_id WHERE m.created_at < ? - a.seconds * 1000 ORDER BY m.seq LIMIT 500').all(Date.now()));
+    if (count === 500) autoDeleteCheckedAt = 0;
+    return count;
   };
   const runSchedules = () => {
     const now = Date.now();
     purgeExpired();
+    purgeAutoDelete();
     for (const row of stmt('SELECT * FROM scheduled_messages WHERE send_at<=? ORDER BY send_at').all(now)) {
       stmt('DELETE FROM scheduled_messages WHERE id=?').run(row.id);
       const room = stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
@@ -1226,6 +1242,20 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
   // 群头像：群主（大厅为空间管理者）才能换；旧图片随后清理。
+  // 自动删除的时长：关闭、1 天、1 周、1 个月。群聊由群主、大厅由管理者设置，私聊双方都可以设置。
+  const AUTO_DELETE = [0, 86400, 604800, 2592000];
+  app.post('/api/room-auto-delete', (req, res) => {
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const allowed = room.kind === 'direct' || (room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : isManager(req.user));
+    if (!allowed) throw fail(room.kind === 'group' ? '只有群主可以设置自动删除' : '只有管理员可以设置大厅的自动删除', 403);
+    const seconds = Number(req.body.seconds);
+    if (!AUTO_DELETE.includes(seconds)) throw fail('自动删除只能是关闭、1 天、1 周或 1 个月');
+    if (seconds) stmt('INSERT INTO room_auto_delete VALUES (?,?,?,?) ON CONFLICT(room_id) DO UPDATE SET seconds=excluded.seconds, set_by=excluded.set_by, set_at=excluded.set_at').run(room.id, seconds, req.user.id, Date.now());
+    else stmt('DELETE FROM room_auto_delete WHERE room_id=?').run(room.id);
+    autoDeleteCheckedAt = 0;
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ autoDelete: seconds });
+  });
   const requireRoomAvatarOwner = req => {
     const room = requireRoom(req.query.roomId ?? req.body?.roomId, req.user.id);
     const allowed = room.kind === 'group' ? groupSettings(room).ownerId === req.user.id : room.kind === 'public' && isManager(req.user);

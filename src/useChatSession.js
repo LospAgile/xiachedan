@@ -215,6 +215,12 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);
         if (data.type === 'message-edited') applyEdit(data.message);
+        // 到期自动删除（或保留期限清理）的消息：从本地去掉，再刷新侧栏的最后一条。
+        if (data.type === 'messages-deleted') {
+          const ids = new Set(data.ids);
+          setMessages(previous => previous[data.roomId] ? { ...previous, [data.roomId]: previous[data.roomId].filter(message => !ids.has(message.id)) } : previous);
+          refresh().catch(() => {});
+        }
         if (data.type === 'users') setState(previous => previous ? ({ ...previous, users: data.users, me: { ...previous.me, ...data.users.find(user => user.id === previous.me.id) } }) : previous);
         if (data.type === 'rooms') refresh().catch(error => notify(error.message));
         if (data.type === 'room-pins') setPinsVersion(version => version + 1);

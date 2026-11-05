@@ -1199,3 +1199,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .wallpaper-swatch.active { box-shadow: 0 0 0 2px var(--accent-bright); }
 .wallpaper-swatch.custom { justify-content: center; align-items: center; border: 1px dashed var(--line); background-color: var(--fill-1); }
 .wallpaper-grid .text-button { grid-column: 1 / -1; justify-self: start; font-size: 12px; }
+
+/* 自动删除 */
+.auto-delete-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--fill-2); font-size: 11px; font-weight: 500; color: var(--text-2); vertical-align: 2px; }
+.auto-delete-entry select { width: auto; min-height: 26px; padding: 0 6px; font-size: 12px; }
+.auto-delete-entry small { color: var(--text-2); font-size: 12px; }

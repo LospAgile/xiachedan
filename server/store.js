@@ -80,6 +80,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS room_avatars (room_id TEXT PRIMARY KEY, upload_id TEXT NOT NULL);
     -- 名字颜色：每人在 7 种昵称色里自选一种（编号 0–6），没选时按身份自动分配。
     CREATE TABLE IF NOT EXISTS user_name_colors (user_id TEXT PRIMARY KEY, color INTEGER NOT NULL);
+    -- 按会话自动删除：消息发出超过 seconds 秒后为所有人删除（阅后即焚，Telegram 式定时）。
+    CREATE TABLE IF NOT EXISTS room_auto_delete (room_id TEXT PRIMARY KEY, seconds INTEGER NOT NULL, set_by TEXT NOT NULL, set_at INTEGER NOT NULL);
     -- 关键词提醒：消息里出现这些词时像被 @ 一样提醒，跨设备同步。
     CREATE TABLE IF NOT EXISTS user_keywords (user_id TEXT PRIMARY KEY, keywords TEXT NOT NULL);
     -- 会话文件夹：每人自建，存会话标识列表，跨设备同步。

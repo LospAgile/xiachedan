@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
 import Onboarding from './Onboarding';
@@ -25,6 +25,9 @@ import HistorySearch, { SearchResult, SearchStatus, useMessageSearch } from './H
 import { previewText, readStorage } from './history';
 
 const NO_REACTIONS = [];
+// 按会话自动删除的几档（秒）。
+const AUTO_DELETE_OPTIONS = [[0, '关闭'], [86400, '1 天'], [604800, '1 周'], [2592000, '1 个月']];
+const autoDeleteLabel = seconds => AUTO_DELETE_OPTIONS.find(([value]) => value === seconds)?.[1] || '';
 
 // 选中的文字如果都在这条消息的正文里，就作为引用片段（Telegram 式部分引用）。
 function selectedQuote(messageId) {
@@ -540,6 +543,7 @@ export default function App() {
     </button>;
   };
   const groupOwner = room?.kind === 'group' ? room.ownerId : null;
+  const canSetAutoDelete = room?.kind === 'direct' || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
   const canEditRoomAvatar = room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
   const memberRow = (user, size, inGroup = false, panel = false) => <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
@@ -594,7 +598,7 @@ export default function App() {
       <div className="conversation-body"><section className="chat-column">
         <header className="chat-toolbar" data-drag-region>
           <IconButton icon={ChevronLeft} label="返回会话列表" className="back-button glass" onClick={() => setMobileChat(false)} />
-          <div className="toolbar-title glass">{room.kind === 'direct' && peer ? avatarButton(peer, roomIcon(room, 34), 'toolbar-icon avatar-button') : canEditRoomAvatar ? <button type="button" className="toolbar-icon avatar-button" aria-label="设置群头像" title="设置群头像" aria-haspopup="dialog" onClick={() => setModal('roomAvatar')}>{roomIcon(room, 34)}</button> : <span className="toolbar-icon">{roomIcon(room, 34)}</span>}<span className="toolbar-copy"><h2>{room.name}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></span></div>
+          <div className="toolbar-title glass">{room.kind === 'direct' && peer ? avatarButton(peer, roomIcon(room, 34), 'toolbar-icon avatar-button') : canEditRoomAvatar ? <button type="button" className="toolbar-icon avatar-button" aria-label="设置群头像" title="设置群头像" aria-haspopup="dialog" onClick={() => setModal('roomAvatar')}>{roomIcon(room, 34)}</button> : <span className="toolbar-icon">{roomIcon(room, 34)}</span>}<span className="toolbar-copy"><h2>{room.name}{room.autoDelete > 0 && <span className="auto-delete-tag" title={`消息发出 ${autoDeleteLabel(room.autoDelete)} 后自动删除`}><Timer size={12} />{autoDeleteLabel(room.autoDelete)}</span>}</h2><span className={`toolbar-subtitle ${typingLabel(room) ? 'typing-text' : ''}`} aria-live="polite">{typingLabel(room) || subtitle}</span></span></div>
           <div className="toolbar-actions">
             <button className={`toolbar-button glass privacy-toggle ${privateMode ? 'enabled' : ''}`} onClick={() => changePrivacy(value => !value)} role="switch" aria-checked={privateMode} aria-label="隐私模式" title="隐私模式 · ⌘⇧P · 悬停消息查看内容">{privateMode ? <EyeOff size={16} /> : <Eye size={16} />}<kbd>⌘⇧P</kbd></button>
             <button className={`toolbar-button glass member-count ${showMembers ? 'selected' : ''}`} onClick={() => { setShowMembers(value => !value); setPanelView('members'); }} aria-pressed={showMembers} aria-label={`会话成员，${groupMembers.length} 人`} title="会话成员"><span className="avatar-stack">{groupMembers.slice(0, 3).map(user => <Avatar key={user.id} user={user} size={20} />)}</span><span>{groupMembers.length}</span></button>
@@ -639,6 +643,10 @@ export default function App() {
         : panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
+          <label className="history-entry auto-delete-entry"><Timer size={16} /><span>自动删除消息</span>
+            {canSetAutoDelete ? <select aria-label="自动删除消息" value={room.autoDelete || 0} onChange={async event => { try { await api('room-auto-delete', { roomId: room.id, seconds: Number(event.target.value) }); await refresh(); notify(Number(event.target.value) ? `消息将在发出 ${autoDeleteLabel(Number(event.target.value))} 后自动删除` : '已关闭自动删除'); } catch (error) { notify(error.message); } }}>
+              {AUTO_DELETE_OPTIONS.map(([seconds, label]) => <option key={seconds} value={seconds}>{label}</option>)}</select>
+              : <small>{room.autoDelete ? autoDeleteLabel(room.autoDelete) : '关闭'}</small>}</label>
           {canEditRoomAvatar && <div className="room-avatar-edit">
             {roomIcon(room, 40)}<button type="button" className="secondary-button" aria-haspopup="dialog" onClick={() => setModal('roomAvatar')}>{room.avatar ? '更换群头像' : '设置群头像'}</button>
           </div>}
