@@ -1086,3 +1086,13 @@ button.message-read-status.is-read { color: var(--text-1); }
   .settings-layout.pane-open .settings-pane { display: block; }
   .settings-back { display: inline-flex; }
 }
+
+/* 头像固定在一组消息第一条旁边：不跟随滚动，气泡的「尾巴」也改到第一条 */
+.message-group.avatar-top .group-avatar { justify-content: flex-start; }
+.message-group.avatar-top .group-avatar > .avatar, .message-group.avatar-top .group-avatar > .avatar-button { position: static; }
+.avatar-top .message-row:not(.mine):not(.continued) .message-bubble { border-top-left-radius: 4px; }
+.avatar-top .message-row:not(.mine).last .message-bubble { border-bottom-left-radius: 18px; }
+.avatar-top .message-row.mine:not(.continued) .message-bubble { border-top-right-radius: 4px; }
+.avatar-top .message-row.mine.last .message-bubble { border-bottom-right-radius: 18px; }
+.mine .bubble-name { color: rgba(255, 255, 255, .85); }
+.settings-pane .segmented-control + .inline-note { margin: 6px 0 12px; }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, LoaderCircle, LogOut, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, ExternalLink, Info, KeyRound, LoaderCircle, LogOut, MessageSquare, Palette, PencilLine, Server, ShieldCheck, UserRound, Wifi } from 'lucide-react';
 import { api, formatSize } from './api';
 import { FormattedText } from './markdown';
 import { Avatar, Modal } from './components';
@@ -10,7 +10,7 @@ import { readQuiet, saveQuiet, isQuiet } from './quiet';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
-  ['account', '账号', UserRound], ['appearance', '外观', Palette], ['notifications', '通知', Bell],
+  ['account', '账号', UserRound], ['appearance', '外观', Palette], ['chat', '聊天', MessageSquare], ['notifications', '通知', Bell],
   ['privacy', '隐私与安全', ShieldCheck], ['space', '空间', Server], ['about', '关于', Info],
 ];
 
@@ -21,7 +21,7 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode }) {
+export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -41,6 +41,14 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
           className={`accent-swatch ${appearance.accent === value ? 'active' : ''}`} style={{ background: value || '#d9653f' }} onClick={() => onAppearance({ ...appearance, accent: value })} />)}
           <label className={`accent-swatch custom ${appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? 'active' : ''}`} title="自定义颜色" style={{ background: appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? appearance.accent : undefined }}>
             <input type="color" aria-label="自定义主题色" value={appearance.accent || '#d9653f'} onChange={event => onAppearance({ ...appearance, accent: event.target.value })} /></label></div><h4>消息字号</h4><div className="segmented-control font-size-control" role="radiogroup" aria-label="消息字号">{FONT_SIZES.map(([label, size]) => <button type="button" key={size} role="radio" aria-checked={appearance.fontSize === size} className={appearance.fontSize === size ? 'active' : ''} onClick={() => onAppearance({ ...appearance, fontSize: size })}>{label}</button>)}</div></>}
+    </>,
+    chat: chatPrefs && <>
+      <h4>头像</h4>
+      <div className="segmented-control" role="radiogroup" aria-label="头像位置">{[['sticky', '跟随滚动'], ['top', '固定在第一条旁边']].map(([value, label]) =>
+        <button type="button" key={value} role="radio" aria-checked={chatPrefs.avatarMode === value} className={chatPrefs.avatarMode === value ? 'active' : ''} onClick={() => onChatPrefs({ avatarMode: value })}>{label}</button>)}</div>
+      <p className="inline-note">{chatPrefs.avatarMode === 'top' ? '头像对齐一组连续消息的第一条，不随滚动移动。' : '一组连续消息很长时，头像贴着可视区底部跟随滚动（Telegram 式）。'}</p>
+      <SettingRow title="群聊中显示自己的头像和名字"><Switch label="群聊中显示自己的头像和名字" checked={chatPrefs.showSelfInGroups} onChange={value => onChatPrefs({ showSelfInGroups: value })} /></SettingRow>
+      <SettingRow title="私聊中显示双方的头像和名字"><Switch label="私聊中显示双方的头像和名字" checked={chatPrefs.showBothInDirect} onChange={value => onChatPrefs({ showBothInDirect: value })} /></SettingRow>
     </>,
     notifications: <>
       {window.desktop?.getState && <DesktopSettings notify={notify} />}

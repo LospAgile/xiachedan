@@ -226,7 +226,7 @@ function ReactionChip({ item, viewerId, nameOf, userOf, live, onToggle }) {
 }
 
 // users 只用来在成员资料变化时让消息重新渲染（引用里的名字、回应者头像都取自成员资料）。
-export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile }) {
+export const Message = React.memo(function Message({ message, user, mine, continued = false, privateMode, onPreview, viewerId, readingEnabled, onRead, recipients = [], direct = false, onContextMenu, onReadDetail, onReply, onOpenQuote, nameOf, reactionOptions = [], onReact, picking = false, onPick, selecting = false, selected = false, onToggleSelect, last = true, onVote, onClosePoll, onOpenThread, grouped = false, colorOf, onOpenBundle, userOf, onOpenProfile, showName: nameShown }) {
   const [revealed, setRevealed] = useState(false);
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
@@ -285,10 +285,10 @@ export const Message = React.memo(function Message({ message, user, mine, contin
     {meta}</div>;
   const lastFile = message.attachments.at(-1);
   const mediaLast = !message.text && lastFile && /^(image|video)\//.test(lastFile.mime);
-  const showName = !mine && !direct && !continued;
+  const showName = nameShown ?? (!mine && !direct && !continued);
   const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
-    {showName && <div className="bubble-name" style={{ color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
+    {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
       ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
