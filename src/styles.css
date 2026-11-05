@@ -1103,3 +1103,20 @@ button.message-read-status.is-read { color: var(--text-1); }
 .conversation.active .draft-tag { color: #fff; }
 .recalled-message .text-button { margin-left: 6px; font-size: inherit; }
 .message-text a.message-link { text-decoration: none; font-weight: 500; }
+
+/* 相册网格：2–6 张图片或视频拼在一起（Telegram 式），说明栏悬停时才显示 */
+.album { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; width: 360px; max-width: 100%; border-radius: 12px; overflow: hidden; }
+.album .attachment { position: relative; grid-column: span 3; height: 180px; border-radius: 0; }
+.album .attachment + .attachment { margin-top: 0; }
+.album .image-button, .album .image-button img, .album .attachment video { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+.album-3 .attachment:first-child { grid-column: span 6; height: 200px; }
+.album-3 .attachment:not(:first-child) { height: 140px; }
+.album-4 .attachment { height: 150px; }
+.album-5 .attachment:nth-child(n + 3) { grid-column: span 2; height: 120px; }
+.album-5 .attachment:nth-child(-n + 2) { height: 160px; }
+.album-6 .attachment { grid-column: span 2; height: 120px; }
+.album .attachment-caption { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px; background: linear-gradient(transparent, rgba(0, 0, 0, .55)); color: #fff; opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease-out); }
+.album .attachment:hover .attachment-caption, .album .attachment:focus-within .attachment-caption { opacity: 1; pointer-events: auto; }
+.album .video-attachment .attachment-caption { top: 0; bottom: auto; padding: 4px 6px 14px; background: linear-gradient(rgba(0, 0, 0, .55), transparent); }
+.album + .file-card, .album + .attachment { margin-top: 4px; }
+.has-album .bubble-meta-overlay { bottom: 12px; }
