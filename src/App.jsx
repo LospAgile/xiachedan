@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
 import Onboarding from './Onboarding';
@@ -454,6 +454,9 @@ export default function App() {
       try { jumpToMessage(await api(`message-location?id=${encodeURIComponent(id)}`)); } catch (error) { notify(error.message); }
     },
     reEdit: message => { const saved = recalledTexts[message.id]; if (!saved) return; forgetRecalled(message.id); setInjectDraft({ roomId: message.roomId, text: saved.text, nonce: Date.now() }); } };
+  // 还没看到的、提到我（或 @所有人）的消息：右下角的「@」按钮依次跳过去。
+  const unreadMentions = currentMessages.filter(message => message.senderId !== state.me.id && !message.recalledAt && message.mentions?.some(id => id === state.me.id || id === '*')
+    && Array.isArray(message.readBy) && !message.readBy.includes(state.me.id));
   // 群聊默认不显示自己的头像和名字，私聊默认双方都不显示；都可以在设置里打开。
   const showAvatar = mine => room?.kind === 'direct' ? chatPrefs.showBothInDirect : !mine || chatPrefs.showSelfInGroups;
   const recipientIds = groupMembers.filter(user => user.id !== state.me.id).map(user => user.id);
@@ -582,7 +585,7 @@ export default function App() {
           user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
           readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} recipients={recipientsCache.current} direct={room.kind === 'direct'} />)}</div>{mine && avatar}</div></React.Fragment>; })}
         {outbox.items.filter(item => item.roomId === room.id).map(item => <OutboxMessage key={item.clientId} item={item} avatarColumn={showAvatar(true)} onRetry={outbox.retry} onDiscard={outbox.discard} />)}
-      </div></div>{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
+      </div></div>{unreadMentions.length > 0 && <button type="button" className="jump-to-mention glass" aria-label={`跳到提到你的消息，还有 ${unreadMentions.length} 条`} title="跳到提到你的消息" onClick={() => jumpToMessage(unreadMentions[0])}><AtSign size={18} /><span className="mention-count">{unreadMentions.length > 99 ? '99+' : unreadMentions.length}</span></button>}{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
       {selection ? <div className="selection-bar glass" role="toolbar" aria-label="多选消息">
         <span>已选 <b>{selection.length}</b> 条</span>
