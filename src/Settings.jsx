@@ -5,7 +5,7 @@ import { FormattedText } from './markdown';
 import { Avatar, Modal } from './components';
 import { JoinSpaceForm } from './Invitation';
 import { THEMES } from './useTheme';
-import { ACCENTS, FONT_SIZES } from './appearance';
+import { ACCENTS, FONT_SIZES, WALLPAPERS, wallpaperCss, readWallpaperImage, saveWallpaperImage } from './appearance';
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
 import { modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
@@ -39,7 +39,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
     </>,
     appearance: <>
       <h4>外观模式</h4><div className="segmented-control three" role="radiogroup" aria-label="外观">{THEMES.map(([key, label]) => <button type="button" key={key} role="radio" aria-checked={theme === key} className={theme === key ? 'active' : ''} onClick={() => onTheme(key)}>{label}</button>)}</div>
-      {appearance && <><h4>主题色</h4><div className="accent-row" role="radiogroup" aria-label="主题色">{ACCENTS.map(([label, value]) => <button type="button" key={label} role="radio" aria-checked={appearance.accent === value} aria-label={`${label}色`} title={`${label}色`}
+      {appearance && <><h4>聊天背景</h4><WallpaperPicker appearance={appearance} onAppearance={onAppearance} theme={theme} notify={notify} /><h4>主题色</h4><div className="accent-row" role="radiogroup" aria-label="主题色">{ACCENTS.map(([label, value]) => <button type="button" key={label} role="radio" aria-checked={appearance.accent === value} aria-label={`${label}色`} title={`${label}色`}
           className={`accent-swatch ${appearance.accent === value ? 'active' : ''}`} style={{ background: value || '#d9653f' }} onClick={() => onAppearance({ ...appearance, accent: value })} />)}
           <label className={`accent-swatch custom ${appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? 'active' : ''}`} title="自定义颜色" style={{ background: appearance.accent && !ACCENTS.some(([, value]) => value === appearance.accent) ? appearance.accent : undefined }}>
             <input type="color" aria-label="自定义主题色" value={appearance.accent || '#d9653f'} onChange={event => onAppearance({ ...appearance, accent: event.target.value })} /></label></div><h4>消息字号</h4><div className="segmented-control font-size-control" role="radiogroup" aria-label="消息字号">{FONT_SIZES.map(([label, size]) => <button type="button" key={size} role="radio" aria-checked={appearance.fontSize === size} className={appearance.fontSize === size ? 'active' : ''} onClick={() => onAppearance({ ...appearance, fontSize: size })}>{label}</button>)}</div></>}
@@ -170,6 +170,26 @@ const releaseNotes = notes => {
   }
   return lines.join('\n');
 };
+
+// 聊天背景：预览块用当前深浅主题的样子；自定义图片只存在本机。
+function WallpaperPicker({ appearance, onAppearance, theme, notify }) {
+  const light = document.documentElement.dataset.theme === 'light';
+  const [image, setImage] = useState(readWallpaperImage);
+  async function upload(event) {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    try { setImage(await saveWallpaperImage(file)); onAppearance({ ...appearance, wallpaper: 'custom' }); }
+    catch { notify('图片太大或格式不支持，换一张试试'); }
+  }
+  return <div className="wallpaper-grid" role="radiogroup" aria-label="聊天背景" data-theme-key={theme}>
+    {WALLPAPERS.map(([id, label]) => <button type="button" key={id} role="radio" aria-checked={appearance.wallpaper === id} className={`wallpaper-swatch ${appearance.wallpaper === id ? 'active' : ''}`}
+      style={{ background: wallpaperCss(id, light) || undefined }} onClick={() => onAppearance({ ...appearance, wallpaper: id })}><span>{label}</span></button>)}
+    <label className={`wallpaper-swatch custom ${appearance.wallpaper === 'custom' ? 'active' : ''}`} style={{ background: image ? wallpaperCss('custom', light, image) : undefined }}>
+      <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={upload} /><span>{image ? '我的图片' : '上传图片'}</span></label>
+    {image && appearance.wallpaper !== 'custom' && <button type="button" className="text-button" onClick={() => onAppearance({ ...appearance, wallpaper: 'custom' })}>使用我的图片</button>}
+  </div>;
+}
 
 // 关键词提醒：消息里出现这些词时像被 @ 一样提醒（免打扰的会话也会提醒），在所有设备上生效。
 function KeywordSettings({ keywords, onChange, notify }) {
