@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile } from 'lucide-react';
+import { Film, ArrowUp, X, LoaderCircle, RotateCcw, Paperclip, Users, FileText, Smile, Crop } from 'lucide-react';
 import EmojiPicker from './EmojiPicker';
 import { api, upload, uid, formatSize } from './api';
 import { Avatar, IconButton, PrivatePreview, ContextMenu } from './components';
@@ -7,6 +7,8 @@ import { previewText } from './history';
 import { matchFormats, applyFormat, insideCodeFence } from './slashCommands';
 import { isSendKey, modKey } from './chatPrefs';
 import { htmlToMarkdown } from './htmlToMarkdown';
+import { compressImage } from './imageTools';
+import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
@@ -19,6 +21,9 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // 发图默认压缩大图，勾选「原图」时按原文件上传；选择记在本机。
+  const [sendOriginal, setSendOriginal] = useState(() => localStorage.getItem('linliao.sendOriginal') === '1');
+  const [editingImage, setEditingImage] = useState(null);
   // 编辑时输入框临时换成这条消息的正文，草稿原样保留，退出编辑后恢复。
   const [editText, setEditText] = useState('');
   const input = useRef();
@@ -100,9 +105,31 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
       if (file.size > 100 * 1024 * 1024) { notify(`${file.name} 超过 100 MB`); return false; }
       if (!file.size) { notify(`${file.name} 是空文件`); return false; }
       return true;
-    }).map(file => ({ id: uid(), file, url: URL.createObjectURL(file), progress: 0 }));
+    }).map(file => ({ id: uid(), original: file, file, url: URL.createObjectURL(file), progress: 0 }));
     update(roomId, state => ({ ...state, files: [...state.files, ...items] }));
-    for (const item of items) uploadItem(item, roomId);
+    for (const item of items) chooseVersion(item.original, sendOriginal).then(file => sendVersion(item, roomId, file));
+  }
+  const compressible = file => /^image\/(jpeg|png|webp)$/.test(file.type);
+  const chooseVersion = (original, keepOriginal) => keepOriginal || !compressible(original) ? Promise.resolve(original) : compressImage(original).catch(() => original);
+  // 换成另一个版本（压缩、原图或编辑后的）再上传。
+  function sendVersion(item, roomId, file) {
+    let next = item;
+    if (file !== item.file) {
+      URL.revokeObjectURL(item.url);
+      next = { ...item, file, url: URL.createObjectURL(file), attachment: null, progress: 0, error: '' };
+      update(roomId, state => ({ ...state, files: state.files.map(entry => entry.id === item.id ? { ...entry, file: next.file, url: next.url, attachment: null, progress: 0, error: '', edited: next.edited } : entry) }));
+    }
+    uploadItem(next, roomId);
+  }
+  async function toggleOriginal(value) {
+    setSendOriginal(value);
+    try { localStorage.setItem('linliao.sendOriginal', value ? '1' : '0'); } catch {}
+    const roomId = room.id;
+    for (const item of draftsRef.current[roomId]?.files || []) {
+      if (item.edited || !item.original || !compressible(item.original)) continue;
+      const file = await chooseVersion(item.original, value);
+      if (file !== item.file) sendVersion(item, roomId, file);
+    }
   }
   function removeFile(item) {
     URL.revokeObjectURL(item.url);
@@ -204,8 +231,12 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
       {item.file.type.startsWith('image/') ? <img src={item.url} alt="待发送图片" /> : <span className="queued-video">{item.file.type.startsWith('video/') ? <Film size={18} /> : <FileText size={18} />}</span>}
       <div><span>{item.file.name}</span><small>{item.error ? '上传失败' : item.attachment ? formatSize(item.file.size) : `上传 ${item.progress}%`}</small></div>
       {item.error && <IconButton icon={RotateCcw} label="重试上传" size={15} onClick={() => uploadItem(item, room.id)} />}
+      {compressible(item.file) && item.attachment && <IconButton icon={Crop} label="裁剪或标注图片" size={15} onClick={() => setEditingImage(item)} disabled={sending} />}
       <IconButton icon={X} label="移除附件" size={15} onClick={() => removeFile(item)} disabled={sending} />
-    </div>)}</div>}
+    </div>)}
+      {draft.files.some(item => item.original && compressible(item.original)) && <label className="original-toggle" title="不勾选时，大图会压缩后再发送"><input type="checkbox" checked={sendOriginal} onChange={event => toggleOriginal(event.target.checked)} />原图</label>}
+    </div>}
+    {editingImage && <ImageEditor file={editingImage.file} onClose={() => setEditingImage(null)} onDone={file => { const item = editingImage; setEditingImage(null); sendVersion({ ...item, edited: true }, room.id, file); }} />}
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}

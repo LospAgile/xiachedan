@@ -1152,3 +1152,17 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 @keyframes nudge-shake { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-14deg); } 40% { transform: rotate(11deg); } 60% { transform: rotate(-7deg); } 80% { transform: rotate(4deg); } }
 @media (prefers-reduced-motion: reduce) { .nudged { animation: none; } }
 .profile-card button + button { margin-top: 6px; }
+
+/* 发图：原图开关与图片编辑器 */
+.original-toggle { flex: none; align-self: center; display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.original-toggle input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
+.modal.image-editor { width: min(900px, calc(100vw - 24px)); }
+.image-editor-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+.image-editor-tools .segmented-control { margin: 0; width: 180px; }
+.image-editor-tools .segmented-control button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.image-editor-tools .secondary-button { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.pen-colors { display: flex; gap: 8px; }
+.pen-colors button { width: 22px; height: 22px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15); }
+.pen-colors button.active { box-shadow: 0 0 0 2px var(--glass-solid), 0 0 0 4px var(--accent-bright); }
+.image-editor-stage { display: flex; align-items: center; justify-content: center; min-height: 240px; padding: 12px; border-radius: 12px; background: var(--fill-1); }
+.image-editor-stage canvas { display: block; max-width: 100%; max-height: min(60dvh, 560px); touch-action: none; cursor: crosshair; }
