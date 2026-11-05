@@ -310,7 +310,11 @@ export default function App() {
     onDoubleClick: () => { clearTimeout(avatarClick.current); if (user.id !== state.me.id) directMessage(user); },
   });
   const avatarButton = (user, children, className = 'avatar-button') => user
-    ? <button type="button" className={className} aria-label={`查看${user.name}的资料`} {...profileClick(user)}>{children}</button> : children;
+    ? <button type="button" className={className} data-user-id={user.id} aria-label={`查看${user.name}的资料`} {...profileClick(user)}>{children}</button> : children;
+  async function nudge(user) {
+    try { receive((await api('nudge', { roomId: selected, userId: user.id })).message); }
+    catch (error) { notify(error.message); }
+  }
   async function saveNote(user, note) {
     try { applyNote(await api('user-note', { userId: user.id, note })); notify(note.trim() ? '备注已保存' : '备注已删除'); }
     catch (error) { notify(error.message); throw error; }
@@ -351,13 +355,13 @@ export default function App() {
   function messageMenu(event, message) {
     const canCopy = Boolean(message.text) && !privateMode;
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
-    const canReply = !message.recalledAt;
+    const canReply = !message.recalledAt && !message.nudge;
     const quote = canReply && !privateMode ? selectedQuote(message.id) : '';
     const canReact = canReply && Boolean(state.reactions?.length);
-    const canEdit = canRecall && !message.poll;
+    const canEdit = canRecall && !message.poll && !message.nudge;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
-    const canPin = pins.roomId === message.roomId && pins.canPin && !message.recalledAt;
+    const canPin = pins.roomId === message.roomId && pins.canPin && !message.recalledAt && !message.nudge;
     const pinned = pins.pins.some(item => item.message.id === message.id);
     const isSaved = saved.some(item => item.message.id === message.id);
     const act = action => {
@@ -521,7 +525,7 @@ export default function App() {
     }}>管理</button>}
     {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>;
   const subtitle = room?.kind === 'direct' ? peer?.online ? '在线' : peer?.lastSeen ? seenText(peer.lastSeen) : '离线 · 上线后送达' : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
-  const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && previous.senderId === message.senderId &&
+  const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && !previous.nudge && !message.nudge && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
   const userOf = message => userMap[message.senderId] || (message.bot ? { id: message.senderId, name: message.bot, avatar: 'bot' } : undefined);
   // 同一个人连续发的消息合成一组：头像放在组的一侧，滚动时贴住可视区底部。
@@ -579,7 +583,7 @@ export default function App() {
         {hasMore[selected] && <button className="load-older" onClick={loadOlder} disabled={loading}>{loading ? '正在加载…' : '查看更早的消息'}</button>}
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
-        {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const withAvatar = showAvatar(mine); const avatar = withAvatar && !first.recalledAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={32} />)}</div>;
+        {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const withAvatar = showAvatar(mine) && !first.nudge; const avatar = withAvatar && !first.recalledAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={32} />)}</div>;
           return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && chatPrefs.avatarMode === 'top' ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users} showName={position === 0 && withAvatar} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
           reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))}
           user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
@@ -634,7 +638,8 @@ export default function App() {
     {removing && <RemoveMemberDialog user={removing} onClose={() => setRemoving(null)} onRemoved={async () => { setRemoving(null); await refresh(); notify("成员已移除，邀请码已更新"); }} />}
     {profileCard && userMap[profileCard.userId] && <ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
-      onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />}
+      onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }}
+      onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}

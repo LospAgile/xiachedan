@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight } from 'lucide-react';
+import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -270,6 +270,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   }, [message.recalledAt, mine, readingEnabled, hidden, visible, alreadyRead, message.id, message.roomId, message.readBy, onRead, privateMode]);
   const readCount = recipients.filter(id => message.readBy?.includes(id)).length;
   const readLabel = direct ? readCount ? '已读' : '未读' : readCount ? `${readCount}/${recipients.length} 人已读` : '未读';
+  if (message.nudge && !message.recalledAt) return <NudgeLine message={message} mine={mine} user={user} viewerId={viewerId} nameOf={nameOf} fresh={fresh} onContextMenu={onContextMenu} />;
   if (message.recalledAt) return <article className="recalled-message" data-message-id={message.id} data-seq={message.seq}>{message.removedBy ? '管理员删除了一条消息' : mine ? '你撤回了一条消息' : `${user?.name || '成员'}撤回了一条消息`}
     {reEditable && <button type="button" className="text-button" onClick={() => onReEdit?.(message)}>重新编辑</button>}</article>;
   const time = <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>;
@@ -386,7 +387,22 @@ export function ContextMenu({ menu, onClose }) {
 }
 
 // 资料卡：点头像或名字弹出，显示在线状态、部门、签名；可以直接发消息（自己的卡片是编辑资料）。
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose }) {
+// 拍一拍：居中一行「A 拍了拍 B」；刚收到时被拍的人在屏幕上的头像抖一下。
+function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu }) {
+  const target = message.nudge.targetId;
+  useEffect(() => {
+    if (!fresh) return;
+    const avatars = document.querySelectorAll(`[data-user-id="${CSS.escape(target)}"]`);
+    avatars.forEach(element => { element.classList.remove('nudged'); void element.offsetWidth; element.classList.add('nudged'); });
+    const timer = setTimeout(() => avatars.forEach(element => element.classList.remove('nudged')), 800);
+    return () => clearTimeout(timer);
+  }, []);
+  const actor = mine ? '我' : user?.name || '成员';
+  const targetName = target === message.senderId ? '自己' : target === viewerId ? '我' : nameOf?.(target) || '成员';
+  return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
+}
+
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge }) {
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
   const [draftNote, setDraftNote] = useState(note);
@@ -427,6 +443,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     </button>)}
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
+    {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
   </div>;
 }
 

@@ -118,7 +118,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { count: row.count, lastAt: row.lastAt, participants };
   };
   const bundleOf = id => { const row = stmt('SELECT title, items FROM message_bundles WHERE message_id=?').get(id); return row ? { title: row.title, items: JSON.parse(row.items) } : null; };
-  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id) } : null;
+  const serializeMessage = row => row ? { ...baseMessage(row), bundle: bundleOf(row.id), threadOf: threadOf(row.id), thread: threadInfo(row.id), poll: pollOf(row.id), bot: botOf(row.id), editedAt: editedAt(row.id), removedBy: removedBy(row.id), recalledAt: recalledAt(row.id), replyTo: replyFor(row.id), mentions: mentionsOf(row.id), reactions: reactionsOf(row.id), forwardedFrom: forwardOf(row.id), nudge: nudgeOf(row.id) } : null;
+  const nudgeOf = id => { const row = stmt('SELECT target_id FROM message_nudges WHERE message_id=?').get(id); return row ? { targetId: row.target_id } : null; };
   const clearedThroughSeq = () => stmt('SELECT cleared_through_seq FROM history_state WHERE id=1').get().cleared_through_seq;
   const cleanFiles = () => {
     for (const { id } of stmt('SELECT id FROM pending_file_deletions').all()) {
@@ -459,6 +460,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('DELETE FROM message_forwards WHERE message_id=?').run(id);
         stmt('DELETE FROM message_edits WHERE message_id=?').run(id);
         stmt('DELETE FROM message_versions WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_nudges WHERE message_id=?').run(id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       cleanFiles();
@@ -536,6 +538,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能编辑自己发送的消息', 403);
     if (pollOf(id)) throw fail('投票不能编辑');
+    if (nudgeOf(id)) throw fail('拍一拍不能编辑');
     if (recalledAt(id)) throw fail('消息已撤回');
     const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
     if (text.length > 10000) throw fail('每条消息最多 10000 个字符');
@@ -577,7 +580,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -641,6 +644,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const unique = [...new Set(ids)];
     const rows = stmt(`SELECT * FROM messages WHERE id IN (${unique.map(() => '?').join(',')}) ORDER BY seq`).all(...unique);
     if (rows.length !== unique.length || rows.some(row => row.seq <= clearedThroughSeq() || recalledAt(row.id))) throw fail('有消息已撤回或已被清空', 404);
+    if (rows.some(row => nudgeOf(row.id))) throw fail('拍一拍不能转发');
     for (const row of rows) requireRoom(row.room_id, req.user.id);
     const bundleFiles = row => JSON.parse(stmt('SELECT items FROM message_bundles WHERE message_id=?').get(row.id)?.items || '[]').flatMap(item => item.attachments);
     const files = rows.flatMap(row => [...JSON.parse(row.attachments), ...(req.body.merge === true ? [] : bundleFiles(row))]);
@@ -934,7 +938,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
   const purgeExpired = () => {
     const days = retentionDays();
     if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
@@ -1121,7 +1125,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       else {
         const quote = message.replyTo;
         if (quote) lines.push(`↪ 回复 ${quote.senderId ? nameOf(quote.senderId) : ''}：${quote.missing ? '原消息已不存在' : quote.recalled ? '原消息已撤回' : quote.text.replace(/\s+/g, ' ').slice(0, 40) || '[附件]'}`);
-        if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
+        if (message.nudge) lines.push(`[拍一拍] 拍了拍 ${message.nudge.targetId === message.senderId ? '自己' : nameOf(message.nudge.targetId)}`);
+        else if (message.bundle) lines.push(`[聊天记录] ${message.bundle.title}`, ...message.bundle.items.map(item => `  ${item.senderName}：${item.text || item.attachments.map(file => `[${file.name}]`).join(' ')}`));
         else if (message.poll) lines.push(`[投票${message.poll.multiple ? '，多选' : ''}${message.poll.closedAt ? '，已结束' : ''}] ${message.text}`, ...message.poll.options.map(option => `  · ${option.text}：${option.voters.length} 票`));
         else if (message.text) lines.push(message.text);
         for (const file of message.attachments) lines.push(`[附件] ${file.name}（${sizeText(file.size)}）`);
@@ -1330,6 +1335,24 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
     broadcast({ type: 'message', message }, room.id);
     if (threadRoot) broadcast({ type: 'message-thread', roomId: room.id, rootId: threadRoot, thread: threadInfo(threadRoot) }, room.id);
+    res.status(201).json({ message });
+  });
+  // 拍一拍：会话里出现「A 拍了拍 B」；只能拍会话里的成员（也可以拍自己），每人每分钟最多 10 次。
+  app.post('/api/nudge', (req, res) => {
+    rateLimit(req, 'nudge', 10);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    requireVoice(req.user);
+    const target = typeof req.body.userId === 'string' && userById(req.body.userId);
+    if (!target || !canAccess(room, target.id)) throw fail('只能拍会话里的成员');
+    const id = randomUUID();
+    db.exec('BEGIN');
+    try {
+      stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, '', '[]', `nudge:${randomUUID()}`, Date.now());
+      stmt('INSERT INTO message_nudges VALUES (?,?)').run(id, target.id);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    const message = { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] };
+    broadcast({ type: 'message', message }, room.id);
     res.status(201).json({ message });
   });
   app.get('/api/media', (req, res) => {

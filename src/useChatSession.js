@@ -147,6 +147,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const mentionsMe = message.mentions?.some(id => id === current?.me.id || id === '*');
     // 免打扰的会话只在被 @ 时提醒。
     if (message.recalledAt || !current || message.senderId === current.me.id || (mutedRef?.current.has(message.roomId) && !mentionsMe) || isQuiet(mentionsMe)) return;
+    // 拍一拍只提醒被拍的人。
+    if (message.nudge && message.nudge.targetId !== current.me.id) return;
     // 提示音：正在看这个会话时不响；Windows 的系统通知自带声音，弹出时不重复响。
     const watching = activeRoom.current === message.roomId && document.hasFocus() && !document.hidden;
     const ring = () => { if (!watching && chatPref('sound')) playMessageSound(); };
@@ -155,7 +157,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const hidden = privacyRef.current;
     const title = hidden ? '虾扯蛋 · 新消息' : `${mentionsMe ? '[有人@你] ' : ''}${sender?.name || message.bot || '新消息'}${target && target.kind !== 'direct' ? ` · ${target.name}` : ''}`;
     window.desktop.message({ id: message.id, roomId: message.roomId, privateMode: hidden,
-      title: title.slice(0, 120), body: hidden ? '****' : previewText(message).slice(0, 240),
+      title: title.slice(0, 120), body: hidden ? '****' : message.nudge ? '拍了拍你' : previewText(message).slice(0, 240),
     }).then(shown => { if (!(shown && window.desktop.platform === 'windows')) ring(); }).catch(error => notify(error.message));
   }, [notify, syncHistory, privacyRef]);
   // 自己写的成员备注（只有自己看得到）：空字符串表示删除。

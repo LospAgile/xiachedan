@@ -56,6 +56,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS message_recalls (message_id TEXT PRIMARY KEY, recalled_at INTEGER NOT NULL);
     -- 引用回复：只记录被引用消息的标识，引用内容在读取时按原消息的最新状态生成。
     CREATE TABLE IF NOT EXISTS message_replies (message_id TEXT PRIMARY KEY, reply_to TEXT NOT NULL);
+    -- 拍一拍：一条没有正文的特殊消息，记下被拍的人。
+    CREATE TABLE IF NOT EXISTS message_nudges (message_id TEXT PRIMARY KEY, target_id TEXT NOT NULL);
     -- 引用回复时只引用原消息里选中的一段文字（Telegram 式）；原消息撤回或清空后随之删除。
     CREATE TABLE IF NOT EXISTS message_reply_quotes (message_id TEXT PRIMARY KEY, quote TEXT NOT NULL);
     -- @提及：user_id 为成员标识，'*' 表示 @所有人。
