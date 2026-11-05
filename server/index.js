@@ -184,7 +184,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const ownerId = row?.owner_id && members.includes(row.owner_id) ? row.owner_id : members[0] || null;
     const adminIds = stmt('SELECT user_id FROM room_admins WHERE room_id=?').all(room.id).map(item => item.user_id).filter(id => id !== ownerId && members.includes(id));
     const policy = stmt('SELECT all_muted, join_approval FROM room_group_policy WHERE room_id=?').get(room.id);
-    return { ownerId, adminIds, allMuted: Boolean(policy?.all_muted), joinApproval: Boolean(policy?.join_approval),
+    const nicknames = Object.fromEntries(stmt('SELECT user_id, nickname FROM room_nicknames WHERE room_id=?').all(room.id).filter(row => members.includes(row.user_id)).map(row => [row.user_id, row.nickname]));
+    return { ownerId, adminIds, nicknames, allMuted: Boolean(policy?.all_muted), joinApproval: Boolean(policy?.join_approval),
       announcement: row?.announcement ? { text: row.announcement, updatedAt: row.announcement_at, updatedBy: row.announcement_by } : null };
   };
   const saveSettings = (roomId, change) => {
@@ -918,6 +919,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const ownerId = groupSettings(room).ownerId;
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members), room.id);
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
+    stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
     if (ownerId === req.user.id) saveSettings(room.id, { owner_id: members[0] || null });
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === req.user.id);
@@ -975,6 +977,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
     broadcast({ type: 'rooms' }, room.id);
     res.json({ ok: true });
+  });
+  // 群昵称：只能设自己的，最多 16 个字，清空即恢复原名。
+  app.post('/api/room-nickname', (req, res) => {
+    rateLimit(req, 'nickname', 30);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    if (room.kind !== 'group') throw fail('只有群聊可以设置群昵称');
+    if (typeof req.body.nickname !== 'string' || req.body.nickname.trim().length > 16) throw fail('群昵称最多 16 个字');
+    const nickname = req.body.nickname.trim();
+    if (nickname) stmt('INSERT INTO room_nicknames VALUES (?,?,?) ON CONFLICT(room_id, user_id) DO UPDATE SET nickname=excluded.nickname').run(room.id, req.user.id, nickname);
+    else stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, req.user.id);
+    broadcast({ type: 'rooms' }, room.id);
+    res.json({ nickname });
   });
   // 邀请链接：群主或管理员生成（或重置）、停用；令牌只有群主和管理员看得到。
   app.post('/api/room-invite', (req, res) => {
@@ -1046,6 +1060,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (target === ownerId || (req.user.id !== ownerId && adminIds.includes(target))) throw fail('只有群主可以移出管理员', 403);
     stmt('UPDATE rooms SET members=? WHERE id=?').run(JSON.stringify(members.filter(id => id !== target)), room.id);
     stmt('DELETE FROM room_admins WHERE room_id=? AND user_id=?').run(room.id, target);
+    stmt('DELETE FROM room_nicknames WHERE room_id=? AND user_id=?').run(room.id, target);
     broadcast({ type: 'rooms' }, room.id);
     deliver({ type: 'rooms' }, socket => socket.userId === target);
     res.json({ ok: true });

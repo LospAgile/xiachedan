@@ -84,6 +84,8 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS room_group_policy (room_id TEXT PRIMARY KEY, all_muted INTEGER NOT NULL DEFAULT 0, join_approval INTEGER NOT NULL DEFAULT 0, invite_token TEXT, invite_at INTEGER);
     -- 入群申请：开了入群审批后，通过链接加入或普通成员拉人都先进申请，由群主或管理员处理。
     CREATE TABLE IF NOT EXISTS room_join_requests (id TEXT PRIMARY KEY, room_id TEXT NOT NULL, user_id TEXT NOT NULL, invited_by TEXT, created_at INTEGER NOT NULL, UNIQUE (room_id, user_id));
+    -- 群昵称：成员在某个群里显示的名字，只在这个群里生效。
+    CREATE TABLE IF NOT EXISTS room_nicknames (room_id TEXT NOT NULL, user_id TEXT NOT NULL, nickname TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
     -- 群管理员：由群主指定，可以改群名和公告、移出普通成员。
     CREATE TABLE IF NOT EXISTS room_admins (room_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (room_id, user_id));
     -- 自定义状态：一个表情加一段文字，until 到期后不再显示（为空表示不自动清除）。

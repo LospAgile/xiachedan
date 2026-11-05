@@ -411,7 +411,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [] }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -442,6 +442,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     style={{ left: Math.max(8, Math.min(anchor.x, innerWidth - 268)), top }}>
     <Avatar user={user} size={64} online={user.removed ? undefined : user.online} />
     <h3 style={{ color: nameColor(user.id, user) }}>{user.name}{self && <small className="me-tag">我</small>}</h3>
+    {groupNickname && <p className="profile-status">群昵称：{groupNickname}</p>}
     <p className={`profile-status ${user.online ? 'online' : ''}`}>{status}</p>
     {activeStatus(user) && <p className="profile-custom-status">{activeStatus(user).emoji} {activeStatus(user).text}{activeStatus(user).until && <small>到 {new Date(activeStatus(user).until).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small>}</p>}
     {department !== null ? <form className="profile-note editing" onSubmit={async event => { event.preventDefault(); try { await onSetDepartment(department.trim()); setDepartment(null); } catch {} }}>

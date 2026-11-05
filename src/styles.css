@@ -1244,3 +1244,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .join-request small { font-size: 11px; color: var(--text-2); }
 .join-request .primary-button { min-height: 28px; padding: 0 10px; font-size: 12px; }
 .invite-actions { flex: none; }
+.entry-value { margin-left: auto; font-size: 12px; color: var(--text-2); }
+.nickname-form { display: flex; gap: 6px; margin: 4px 0; }
+.nickname-form input { flex: 1; min-width: 0; }
+.nickname-form button { flex: none; min-height: 32px; padding: 0 10px; }

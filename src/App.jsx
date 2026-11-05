@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff, Link2, UserCheck } from 'lucide-react';
+import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download, AtSign, FolderPlus, Timer, BookUser, MicOff, Link2, UserCheck, IdCard } from 'lucide-react';
 import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor, activeStatus, StatusEmoji } from './components';
 import Onboarding from './Onboarding';
@@ -445,6 +445,8 @@ export default function App() {
   }
   // 长会话里每次更新只重渲染有变化的消息：传给 Message 的回调保持同一引用，调用时再取最新的状态和处理函数。
   const latest = useRef(null);
+  const nicknameCache = useRef(new Map());
+  const [editingNickname, setEditingNickname] = useState(null);
   // 切换标签或文件夹变化时，把选中的标签滚到可见位置。
   useEffect(() => { document.querySelector('.folder-tabs .active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [folderTab, state?.folders?.length]);
   // 点聊天里的消息链接，或从外部打开带 #msg= 的地址：查到所在位置后跳过去。
@@ -468,8 +470,8 @@ export default function App() {
   const messageHandlers = useMemo(() => ({
     onContextMenu: (event, message) => latest.current.messageMenu(event, message),
     onReply: target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id, quote: selectedQuote(target.id) }); },
-    nameOf: id => latest.current.userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined),
-    userOf: id => latest.current.userMap[id],
+    nameOf: id => latest.current.displayUser(latest.current.userMap[id])?.name || (id?.startsWith('webhook:') ? '机器人' : undefined),
+    userOf: id => latest.current.displayUser(latest.current.userMap[id]),
     colorOf: id => nameColor(id, latest.current.userMap[id]),
     onOpenQuote: (reply, message) => latest.current.jumpToMessage({ id: reply.id, seq: reply.seq, roomId: message.roomId }),
     onReact: (message, emoji) => latest.current.toggleReaction(message, emoji),
@@ -495,7 +497,7 @@ export default function App() {
   const room = rooms.find(room => room.id === selected && !room.hidden);
   const groupMembers = !room ? [] : room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
-  latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead, openProfile,
+  latest.current = { messageMenu, userMap, displayUser, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead, openProfile,
     joinGroup: async ({ roomId, token }) => {
       try {
         const result = await api('room-join', { roomId, token });
@@ -584,18 +586,34 @@ export default function App() {
   };
   const groupOwner = room?.kind === 'group' ? room.ownerId : null;
   const groupAdmins = room?.kind === 'group' ? room.adminIds || [] : [];
+  // 群昵称只在这个群里生效：显示用的用户对象换上昵称，原始对象和昵称都没变时复用同一个，消息才不会白白重新渲染。
+  const nicknames = room?.kind === 'group' ? room.nicknames || {} : {};
+  const nicknamesKey = JSON.stringify(nicknames);
+  function displayUser(user) {
+    const nick = user && nicknames[user.id];
+    if (!nick) return user;
+    const cached = nicknameCache.current.get(user.id);
+    if (cached?.base === user && cached.nick === nick) return cached.value;
+    const value = { ...user, name: nick, realName: user.name };
+    nicknameCache.current.set(user.id, { base: user, nick, value });
+    return value;
+  }
+  async function saveNickname(nickname) {
+    try { await api('room-nickname', { roomId: room.id, nickname }); await refresh(); setEditingNickname(null); notify(nickname.trim() ? '群昵称已更新' : '已恢复原名'); }
+    catch (error) { notify(error.message); }
+  }
   const isGroupManager = groupOwner === state.me.id || groupAdmins.includes(state.me.id);
   const canSetAutoDelete = room?.kind === 'direct' || (room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner));
   const canEditRoomAvatar = room?.kind === 'group' ? groupOwner === state.me.id : room?.kind === 'public' && (cloud ? isAdmin : isOwner);
   // 右侧成员面板里单击看资料卡、双击私聊；「空间成员」弹窗里单击直接私聊。
-  const memberRow = (user, size, inGroup = false, panel = false) => <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name">{user.name}<StatusEmoji user={user} />{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
+  const memberRow = (user, size, inGroup = false, panel = false) => { const shown = inGroup ? displayUser(user) : user; return <div className="managed-member" key={user.id}><button className="member-row" {...(panel ? profileClick(user) : { onClick: () => directMessage(user) })}><Avatar user={user} size={size} online={user.online} /><span className="member-name" title={shown.realName ? `原名：${shown.realName}` : undefined}>{shown.name}<StatusEmoji user={user} />{user.department && <small className="member-department">{user.department}</small>}{user.id === state.me.id && <small className="me-tag">我</small>}{user.muted && <small className="muted-tag">已禁言</small>}{inGroup && user.id === groupOwner && <small className="owner-tag"><Crown size={10} />群主</small>}{inGroup && groupAdmins.includes(user.id) && <small className="owner-tag admin-tag">管理员</small>}</span><small title={user.bio || undefined}>{user.online ? '在线' : user.lastSeen ? seenText(user.lastSeen) : '离线'}</small><ChevronRight size={14} /></button>{!inGroup && (cloud ? isAdmin : isOwner) && user.id !== state.me.id && user.id !== state.workspace.ownerId && <button className="remove-member" aria-haspopup="menu" aria-label={`管理${user.name}`} onClick={event => {
       const rect = event.currentTarget.getBoundingClientRect();
       setContextMenu({ x: rect.left - 100, y: rect.bottom + 4, label: `管理${user.name}`, items: [
         { id: 'mute', label: user.muted ? '解除禁言' : '禁言…', action: async () => { if (!user.muted) return setMutingUser(user); try { await api('admin/mute', { userId: user.id, muted: false }); notify('已解除禁言'); } catch (error) { notify(error.message); } } },
         ...(isOwner && !cloud ? [{ id: 'remove', label: '从空间移除', action: () => setRemoving(user) }] : []),
       ] });
     }}>管理</button>}
-    {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>;
+    {inGroup && groupOwner === state.me.id && user.id !== state.me.id && <button className="remove-member" onClick={() => setGroupAction({ type: 'transfer', user })} aria-label={`把群主转让给${user.name}`}>转让</button>}</div>; };
   // 通讯录：按部门分组，没填部门的放最后；组内在线的排前面。
   const contactNeedle = contactQuery.trim().toLowerCase();
   const contactGroups = Object.entries(state.users.filter(user => !user.removed && (!contactNeedle || [user.name, user.department, user.bio].some(value => value?.toLowerCase().includes(contactNeedle))))
@@ -606,7 +624,7 @@ export default function App() {
   const subtitle = room?.kind === 'direct' ? (peerStatus ? `${peerStatus.emoji} ${peerStatus.text} · `.replace(/^ /, '') : '') + (peer?.online ? '在线' : peer?.lastSeen ? seenText(peer.lastSeen) : '离线 · 上线后送达') : `${groupMembers.length} 位成员 · ${groupMembers.filter(user => user.online).length} 人在线`;
   const sameGroup = (previous, message) => previous && !previous.recalledAt && !message.recalledAt && !previous.nudge && !message.nudge && previous.senderId === message.senderId &&
     new Date(previous.createdAt).toDateString() === new Date(message.createdAt).toDateString() && message.createdAt - previous.createdAt < 5 * 60000;
-  const userOf = message => userMap[message.senderId] || (message.bot ? { id: message.senderId, name: message.bot, avatar: 'bot' } : undefined);
+  const userOf = message => displayUser(userMap[message.senderId]) || (message.bot ? { id: message.senderId, name: message.bot, avatar: 'bot' } : undefined);
   // 同一个人连续发的消息合成一组：头像放在组的一侧，滚动时贴住可视区底部。
   const messageGroups = [];
   for (const [index, message] of currentMessages.entries()) {
@@ -668,7 +686,7 @@ export default function App() {
         {!hasMore[selected] && <div className={`channel-welcome ${currentMessages.length ? 'has-messages' : ''}`}><span className="welcome-icon">{room.kind === 'public' ? <Hash size={22} /> : room.kind === 'group' ? <Users size={22} /> : <MessageCircle size={22} />}</span><h3>{room.kind === 'public' ? cloud ? '大家都在，随便扯两句。' : '同一个网络，随便扯两句。' : room.kind === 'group' ? `欢迎来到「${room.name}」` : `和${room.name}聊聊吧`}</h3><p>{room.kind === 'public' ? '工作、日常、好玩的，都可以往这里丢。' : room.kind === 'group' ? '文字、图片、视频，把想分享的都留在这里。' : '有些话，适合只对一个人说。'}</p>{room.kind === 'public' && !currentMessages.length && <button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请同事加入</button>}</div>}
         {!currentMessages.length && loading && <div className="messages-loading"><LoaderCircle className="spin" size={17} />正在加载消息…</div>}
         {messageGroups.map(group => { const first = group.messages[0]; const mine = first.senderId === state.me.id; const author = userOf(first); const withAvatar = showAvatar(mine) && !first.nudge; const avatar = withAvatar && !first.recalledAt && <div className="group-avatar">{avatarButton(first.bot ? null : author, <Avatar user={author} size={32} />)}</div>;
-          return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && chatPrefs.avatarMode === 'top' ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users} showName={position === 0 && !first.nudge && showNameOf(mine)} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
+          return <React.Fragment key={first.id}>{group.newDay && <div className="date-divider"><span>{new Date(group.messages[0].createdAt).toDateString() === new Date().toDateString() ? '今天' : new Date(group.messages[0].createdAt).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span></div>}<div className={`message-group ${mine ? 'mine' : ''} ${withAvatar && chatPrefs.avatarMode === 'top' ? 'avatar-top' : ''}`}>{!mine && avatar}<div className="group-rows">{group.messages.map((message, position) => <Message {...messageHandlers} key={message.id} message={message} users={state.users} nicknames={nicknamesKey} showName={position === 0 && !first.nudge && showNameOf(mine)} reEditable={Boolean(recalledTexts[message.id])} quickReact={chatPrefs.quickReact}
           reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))}
           user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
           readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} recipients={recipientsCache.current} direct={room.kind === 'direct'} />)}</div>{mine && avatar}</div></React.Fragment>; })}
@@ -692,6 +710,10 @@ export default function App() {
         : panelView === 'history'
         ? <HistorySearch room={room} userMap={userMap} members={groupMembers} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onJump={jumpToMessage} />
         : <><div className="members-panel-heading"><h3>会话成员 <small>{groupMembers.length}</small></h3><IconButton icon={X} label="关闭成员面板" size={15} onClick={() => setShowMembers(false)} /></div>{room.kind === 'group' && <button className="add-member-button" onClick={() => setModal('addMembers')}><UserPlus size={15} />邀请成员</button>}<button className="history-entry" onClick={() => setPanelView('history')}><MessagesSquare size={16} /><span>聊天记录</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => setPanelView('files')}><Images size={16} /><span>图片与文件</span><ChevronRight size={14} /></button><button className="history-entry" onClick={() => downloadExport(room.id)}><Download size={16} /><span>导出聊天记录</span></button>
+          {room.kind === 'group' && (editingNickname !== null
+            ? <form className="nickname-form" onSubmit={event => { event.preventDefault(); saveNickname(editingNickname); }}><input autoFocus aria-label="我在本群的昵称" maxLength={16} placeholder={`留空则显示「${userMap[state.me.id]?.name}」`} value={editingNickname} onChange={event => setEditingNickname(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setEditingNickname(null); } }} />
+                <button type="button" className="secondary-button" onClick={() => setEditingNickname(null)}>取消</button><button className="primary-button">保存</button></form>
+            : <button type="button" className="history-entry" onClick={() => setEditingNickname(nicknames[state.me.id] || '')}><IdCard size={16} /><span>我在本群的昵称</span><small className="entry-value">{nicknames[state.me.id] || '未设置'}</small><ChevronRight size={14} /></button>)}
           {room.kind === 'group' && isGroupManager && <>
             <div className="history-entry policy-entry"><Link2 size={16} /><span>邀请链接<small>{room.inviteToken ? '本空间的成员点开链接即可加入' : '还没有链接'}</small></span>
               {room.inviteToken ? <span className="invite-actions"><button type="button" className="text-button" onClick={() => copyInvite(room.inviteToken)}>复制</button><button type="button" className="text-button" onClick={() => inviteLink('create')}>重置</button><button type="button" className="text-button danger-text" onClick={() => inviteLink('disable')}>停用</button></span>
@@ -744,6 +766,7 @@ export default function App() {
     {profileCard && userMap[profileCard.userId] && createPortal(<ProfileCard key={profileCard.userId} user={userMap[profileCard.userId]} anchor={profileCard} self={profileCard.userId === state.me.id} onClose={closeProfile}
       note={state.notes?.[profileCard.userId] || ''} onSaveNote={note => saveNote(userMap[profileCard.userId], note)}
       onMessage={() => { setProfileCard(null); directMessage(userMap[profileCard.userId]); }} onSetStatus={() => { setProfileCard(null); setModal('status'); }}
+      groupNickname={nicknames[profileCard.userId]}
       groupActions={room?.kind === 'group' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId]) : []}
       onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
       onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
