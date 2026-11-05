@@ -23,7 +23,7 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs }) {
+export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -78,8 +78,11 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
       {window.desktop && !cloud && <><h4>加入另一个空间</h4><JoinSpaceForm identity={me} />
         <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button></>}
     </>,
-    about: window.desktop?.updates ? <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />
-      : <p className="inline-note">网页版随空间服务器一起更新，刷新页面即可使用最新版本。</p>,
+    about: <>
+      {window.desktop?.updates ? <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />
+        : <p className="inline-note">网页版随空间服务器一起更新，刷新页面即可使用最新版本。</p>}
+      {onShortcuts && <SettingRow title="键盘快捷键" description={`随时按 ${modKey} / 查看。`}><button type="button" className="secondary-button" onClick={onShortcuts}>查看</button></SettingRow>}
+    </>,
   };
   const current = SECTIONS.find(([id]) => id === tab) || SECTIONS[0];
   return <Modal title="设置" wide className="settings-dialog" onClose={onClose}>

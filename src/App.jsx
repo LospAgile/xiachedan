@@ -5,7 +5,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, BundleDialog } from './dialogs';
+import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -184,9 +184,11 @@ export default function App() {
   useEffect(() => {
     const onKey = event => {
       const mac = window.desktop ? window.desktop.platform === 'macos' : /Mac/i.test(navigator.platform);
-      if (!(mac ? event.metaKey : event.ctrlKey) || event.shiftKey || event.altKey) return;
+      // 输入框已经处理过的组合键（如 ⌘K 插入链接）不再当作全局快捷键。
+      if (event.defaultPrevented || !(mac ? event.metaKey : event.ctrlKey) || event.shiftKey || event.altKey) return;
       if (document.querySelector('dialog[open]:not(.quick-switcher)')) return;
       if (event.key.toLowerCase() === 'k') { event.preventDefault(); setSwitcher(value => !value); return; }
+      if (event.key === '/') { event.preventDefault(); setSwitcher(false); setModal('shortcuts'); return; }
       const target = /^[1-9]$/.test(event.key) && orderedRef.current[Number(event.key) - 1];
       if (target) { event.preventDefault(); setSwitcher(false); setSelected(target.id); setMobileChat(true); setReadDetail(null); setPanelView('members'); }
     };
@@ -619,7 +621,7 @@ export default function App() {
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <SettingsDialog chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <SettingsDialog onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="空间成员" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。点一位成员开始私聊。`} onClose={() => setModal(null)}><div className="space-members">{state.users.filter(user => !user.removed).map(user => memberRow(user, 32))}</div><div className="modal-footer"><button className="secondary-button" onClick={() => setModal('invite')}><UserPlus size={15} />邀请新同事</button></div></Modal>}
     {preview && !privateMode && (() => {
       const images = currentMessages.filter(message => !message.recalledAt).flatMap(message => message.attachments.filter(file => file.mime.startsWith('image/')));
@@ -659,6 +661,7 @@ export default function App() {
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
+    {modal === 'shortcuts' && <ShortcutsDialog sendKey={chatPrefs.sendKey} onClose={() => setModal(null)} />}
     {historyFor && <EditHistoryDialog message={historyFor} onClose={() => setHistoryFor(null)} />}
     {recalling && <RecallDialog message={recalling} onClose={() => setRecalling(null)} onRecalled={message => {
       syncHistory([message]); notify('消息已撤回');

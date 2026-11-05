@@ -4,6 +4,7 @@ import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './ap
 import { FormattedText } from './markdown';
 import { Modal, Avatar, AvatarPicker, IdentityFields } from './components';
 import { InvitationShare } from './Invitation';
+import { modKey } from './chatPrefs';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
   const [name, setName] = useState(me.name);
@@ -126,6 +127,23 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !target}>{busy ? '正在转发…' : target ? `转发到「${target.name}」` : '转发'}<ArrowRight size={16} /></button></div>
   </form></Modal>;
+}
+
+// 快捷键一览（⌘/ 打开）。Windows 上 ⌘ 显示为 Ctrl。
+export function ShortcutsDialog({ sendKey, onClose }) {
+  const mod = modKey, mac = modKey === '⌘', shift = mac ? '⇧' : 'Shift', alt = mac ? '⌥' : 'Alt';
+  const groups = [
+    ['通用', [[`${mod} K`, '快速切换会话'], [`${mod} 1–9`, '打开侧栏第 1–9 个会话'], [`${mod} ${shift} P`, '开关隐私模式'], [`${mod} /`, '打开快捷键一览'], ['Esc', '关闭弹窗、退出多选']]],
+    ['输入', [[sendKey === 'enter' ? 'Enter' : `${mod} Enter`, '发送消息'], [sendKey === 'enter' ? `${shift} Enter` : 'Enter', '换行'], ['↑', '输入框为空时，编辑上一条消息'], ['Esc', '取消回复或编辑'], ['/', '插入格式（行首或空格后）'], ['@', '提及成员'], ['双击消息', '点 👍（可在设置里关闭）']]],
+    ['格式', [[`${mod} B`, '粗体'], [`${mod} I`, '斜体'], [`${mod} E`, '行内代码'], [`${mod} ${shift} X`, '删除线'], [`${mod} K`, '把选中的文字做成链接']]],
+    ['会话列表', [[`${alt} ↑ / ${alt} ↓`, '调整置顶会话的顺序'], [`${shift} F10`, '打开会话菜单']]],
+    ['图片查看', [['← / →', '上一张 / 下一张'], ['+ / −', '放大 / 缩小'], ['0', '恢复原始大小'], ['Esc', '关闭']]],
+  ];
+  return <Modal title="键盘快捷键" onClose={onClose} className="shortcuts-dialog">
+    <div className="shortcut-groups">{groups.map(([title, items]) => <section key={title}><h4>{title}</h4><dl>{items.map(([keys, label]) => <React.Fragment key={label}>
+      {/* 「 / 」分开的是可以任选的按法，空格分开的是同时按的键 */}
+      <dt>{keys.split(' / ').map((combo, index) => <React.Fragment key={index}>{index > 0 && <span className="key-or">/</span>}{combo.split(' ').map((key, keyIndex) => <kbd key={keyIndex}>{key}</kbd>)}</React.Fragment>)}</dt><dd>{label}</dd></React.Fragment>)}</dl></section>)}</div>
+  </Modal>;
 }
 
 // 编辑历史：最新的在上面，每个版本带写下的时间。
