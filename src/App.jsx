@@ -26,6 +26,17 @@ import { previewText, readStorage } from './history';
 
 const NO_REACTIONS = [];
 
+// 选中的文字如果都在这条消息的正文里，就作为引用片段（Telegram 式部分引用）。
+function selectedQuote(messageId) {
+  const selection = window.getSelection();
+  const text = selection?.toString().replace(/\s+/g, ' ').trim();
+  if (!text || !selection.rangeCount) return '';
+  const node = selection.getRangeAt(0).commonAncestorContainer;
+  const element = node.nodeType === 1 ? node : node.parentElement;
+  const body = element?.closest('.message-text');
+  return body && body.closest('[data-message-id]')?.dataset.messageId === messageId ? text.slice(0, 500) : '';
+}
+
 export default function App() {
   const [selected, setSelected] = useState('lobby');
   const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
@@ -118,7 +129,8 @@ export default function App() {
   // 正在编辑的消息同样以最新状态为准；按 ↑ 编辑自己最近一条还能编辑的消息。
   const editTarget = editing?.roomId === selected ? currentMessages.find(message => message.id === editing.id && !message.recalledAt) || null : null;
   const lastOwn = state?.me ? currentMessages.findLast(message => message.senderId === state.me.id && !message.recalledAt) : null;
-  const replyTarget = replying?.roomId === selected ? currentMessages.find(message => message.id === replying.id && !message.recalledAt) || null : null;
+  const replyMessage = replying?.roomId === selected ? currentMessages.find(message => message.id === replying.id && !message.recalledAt) || null : null;
+  const replyTarget = replyMessage && replying.quote ? { ...replyMessage, quote: replying.quote } : replyMessage;
   const lastSeq = currentMessages.at(-1)?.seq;
   // 隐私模式下游标只推进到第一条还没看过的他人消息之前，未读角标与已读回执一致。
   // 悬停显示本身说明用户在看，因此隐私模式不再要求窗口处于激活状态。
@@ -332,6 +344,7 @@ export default function App() {
     const canCopy = Boolean(message.text) && !privateMode;
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
     const canReply = !message.recalledAt;
+    const quote = canReply && !privateMode ? selectedQuote(message.id) : '';
     const canReact = canReply && Boolean(state.reactions?.length);
     const canEdit = canRecall && !message.poll;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
@@ -350,7 +363,7 @@ export default function App() {
       if (action === 'save' || action === 'unsave') toggleSaved(latest, action === 'save');
       if (action === 'remind') setReminding(latest);
       if (action === 'thread') openThread(latest.id);
-      if (action === 'reply') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id }); }
+      if (action === 'reply' || action === 'quote') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id, quote: action === 'quote' ? quote : '' }); }
       if (action === 'react') setReactingTo(latest.id);
       if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'forward') setForwarding([latest.id]);
@@ -364,8 +377,9 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canReply, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
+      ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
@@ -399,7 +413,7 @@ export default function App() {
   const recipientsCache = useRef([]);
   const messageHandlers = useMemo(() => ({
     onContextMenu: (event, message) => latest.current.messageMenu(event, message),
-    onReply: target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id }); },
+    onReply: target => { setEditing(null); setReplying({ roomId: target.roomId, id: target.id, quote: selectedQuote(target.id) }); },
     nameOf: id => latest.current.userMap[id]?.name || (id?.startsWith('webhook:') ? '机器人' : undefined),
     userOf: id => latest.current.userMap[id],
     colorOf: id => nameColor(id, latest.current.userMap[id]),

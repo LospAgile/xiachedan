@@ -79,9 +79,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) return null;
     if (!row.id || row.seq <= clearedThroughSeq()) return { id: row.replyTo, missing: true };
     if (recalledAt(row.id)) return { id: row.id, seq: row.seq, senderId: row.sender_id, recalled: true };
-    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200),
+    const quote = stmt('SELECT quote FROM message_reply_quotes WHERE message_id=?').get(id)?.quote;
+    return { id: row.id, seq: row.seq, senderId: row.sender_id, text: row.text.slice(0, 200), ...(quote ? { quote } : {}),
       attachments: JSON.parse(row.attachments).map(file => ({ name: file.name, mime: file.mime })) };
   };
+  // 比较引用片段和原文时忽略格式符号和空白：原文是 Markdown，用户选中的是渲染后的文字。
+  const looseText = text => text.replace(/[*_~`#>|\\[\]()!-]/g, '').replace(/\s+/g, '').toLowerCase();
   const mentionsOf = id => stmt('SELECT user_id FROM message_mentions WHERE message_id=? ORDER BY rowid').all(id).map(row => row.user_id);
   // 按表情第一次出现的先后排列，每个表情附上回应的成员。
   const reactionsOf = id => {
@@ -449,6 +452,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
         stmt('INSERT INTO message_recalls VALUES (?,?)').run(id, Date.now());
         stmt("UPDATE messages SET text='', attachments='[]' WHERE id=?").run(id);
         stmt('DELETE FROM message_reads WHERE message_id=?').run(id);
+        stmt('DELETE FROM message_reply_quotes WHERE message_id=? OR message_id IN (SELECT message_id FROM message_replies WHERE reply_to=?)').run(id, id);
         stmt('DELETE FROM message_replies WHERE message_id=?').run(id);
         stmt('DELETE FROM message_mentions WHERE message_id=?').run(id);
         stmt('DELETE FROM message_reactions WHERE message_id=?').run(id);
@@ -561,7 +565,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -918,7 +922,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders'];
   const purgeExpired = () => {
     const days = retentionDays();
     if (!days || Date.now() - retentionCheckedAt < 3600000) return 0;
@@ -935,6 +939,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
           stmt('DELETE FROM upload_thumbnails WHERE upload_id=?').run(id);
         }
         for (const table of MESSAGE_TABLES) stmt(`DELETE FROM ${table} WHERE message_id=?`).run(row.id);
+        stmt('DELETE FROM message_reply_quotes WHERE message_id IN (SELECT message_id FROM message_replies WHERE reply_to=?)').run(row.id);
         stmt('DELETE FROM message_replies WHERE reply_to=?').run(row.id);
         stmt('DELETE FROM message_threads WHERE root_id=?').run(row.id);
         stmt('DELETE FROM messages WHERE id=?').run(row.id);
@@ -1271,10 +1276,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
     const replyTo = req.body.replyTo === undefined || req.body.replyTo === null ? null : req.body.replyTo;
+    let replyTarget = null;
     if (replyTo !== null) {
       const target = typeof replyTo === 'string' && replyTo.length <= 100 && stmt('SELECT * FROM messages WHERE id=?').get(replyTo);
       if (!target || target.room_id !== room.id || target.seq <= clearedThroughSeq() || recalledAt(target.id)) throw fail('引用的消息不可用');
+      replyTarget = target;
     }
+    const replyQuote = replyTarget && typeof req.body.replyQuote === 'string' ? req.body.replyQuote.trim() : '';
+    if (replyQuote && (replyQuote.length > 500 || !looseText(replyQuote) || !looseText(replyTarget.text).includes(looseText(replyQuote)))) throw fail('引用的文字不在原消息里');
     // 话题回复：根消息必须是同一会话里仍可见的普通消息（话题里的回复不能再开话题）。
     const threadRoot = req.body.threadOf === undefined || req.body.threadOf === null ? null : req.body.threadOf;
     if (threadRoot !== null) {
@@ -1301,6 +1310,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       stmt('INSERT INTO messages (id,room_id,sender_id,text,attachments,client_id,created_at) VALUES (?,?,?,?,?,?,?)').run(id, room.id, req.user.id, messageText, JSON.stringify(attachments), clientId, Date.now());
       for (const file of attachments) stmt('UPDATE uploads SET claimed=1 WHERE id IN (?,?)').run(file.id, file.thumbId || file.id);
       if (replyTo) stmt('INSERT INTO message_replies VALUES (?,?)').run(id, replyTo);
+      if (replyQuote) stmt('INSERT INTO message_reply_quotes VALUES (?,?)').run(id, replyQuote);
       if (threadRoot) stmt('INSERT INTO message_threads VALUES (?,?)').run(id, threadRoot);
       for (const target of mentions) stmt('INSERT INTO message_mentions VALUES (?,?)').run(id, target);
       db.exec('COMMIT');

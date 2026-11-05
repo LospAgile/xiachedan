@@ -166,7 +166,7 @@ export const nameColor = (id, user) => `var(--name-${Number.isInteger(user?.name
 // 引用块的竖条和名字用被引用者的名字颜色（Telegram 式）。
 export function Quote({ reply, author, onOpen, className = '', color }) {
   const unavailable = reply.recalled ? '引用的消息已撤回' : reply.missing ? '引用的消息已被清空' : '';
-  const body = <><b>{author}</b><span>{unavailable || previewText(reply)}</span></>;
+  const body = <><b>{author}</b><span className={reply.quote ? 'quote-excerpt' : undefined}>{unavailable || (reply.quote ? `“${reply.quote}”` : previewText(reply))}</span></>;
   const style = color ? { '--quote-color': color } : undefined;
   return unavailable || !onOpen ? <div className={`message-quote ${unavailable ? 'unavailable' : ''} ${className}`} style={style}>{unavailable ? <span>{unavailable}</span> : body}</div>
     : <button type="button" className={`message-quote ${className}`} style={style} onClick={onOpen} title="查看原消息">{body}</button>;
@@ -327,7 +327,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
         aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}</div>
-      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`}>
+      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
         <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
         {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
