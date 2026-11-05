@@ -149,12 +149,22 @@ function UpdateSettings({ update, onUpdate, notify }) {
   </section>;
 }
 
-// 更新说明来自 GitHub Release 正文：标题转成粗体，PR 链接缩成 #编号，其余交给聊天里的格式渲染。
-const releaseNotes = notes => notes.replace(/\r\n?/g, '\n')
-  .replace(/^#{1,6}\s+(.+)$/gm, (_, title) => `**${title.trim() === "What's Changed" ? '更新内容' : title.trim()}**`)
-  .replace(/^\*\*Full Changelog\*\*:\s*(\S+)$/gm, '[查看完整更新记录]($1)')
-  .replace(/\bin (https:\/\/github\.com\/[^\s/]+\/[^\s/]+\/pull\/(\d+))/g, '[#$2]($1)')
-  .replace(/\n\s*\n+/g, '\n').trim();
+// 更新说明来自 GitHub 自动生成的 Release 正文：只留给用户看的内容。
+// 「What's Changed」改成「更新内容」，去掉每条后面的「by @作者 in 链接」和整段「New Contributors」，完整记录收成一个链接。
+const releaseNotes = notes => {
+  const lines = [];
+  let skipping = false;
+  for (const raw of notes.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trim();
+    const heading = line.match(/^#{1,6}\s+(.+)$/);
+    if (heading) { skipping = /new contributors/i.test(heading[1]); if (!skipping) lines.push(`**${/what's changed/i.test(heading[1]) ? '更新内容' : heading[1]}**`); continue; }
+    const changelog = line.match(/^\*\*Full Changelog\*\*:\s*(\S+)$/);
+    if (changelog) { skipping = false; lines.push('', `[查看完整更新记录](${changelog[1]})`); continue; }
+    if (skipping || !line) continue;
+    lines.push(line.replace(/\s+by @[\w-]+(?:\[bot\])?\s+in\s+https:\/\/github\.com\/\S+\/pull\/\d+\s*$/, ''));
+  }
+  return lines.join('\n');
+};
 
 // 勿扰：每天的固定时段，或临时暂停一阵子；只影响这台设备的系统通知，消息照常收到、未读照常计数。
 function QuietSettings({ notify }) {
