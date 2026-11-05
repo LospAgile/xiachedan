@@ -35,6 +35,8 @@ pub struct ContextMenuOptions {
   #[serde(default)]
   can_copy: bool,
   #[serde(default)]
+  can_link: bool,
+  #[serde(default)]
   can_edit: bool,
   #[serde(default)]
   can_pin: bool,
@@ -77,7 +79,7 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
         // 分组之间用分隔线隔开，空的分组不占位置。
         let groups: [&[(bool, &str, &str)]; 3] = [
           &[(value.can_reply, "reply", "回复"), (value.can_thread, "thread", "在话题中回复"), (value.can_react, "react", "回应"), (value.can_forward, "forward", "转发"), (value.can_forward, "select", "多选")],
-          &[(value.can_copy, "copy", "复制"), (value.can_edit, "edit", "编辑"), (value.can_remind, "remind", "提醒我…"), (value.can_save && !value.saved, "save", "收藏"), (value.can_save && value.saved, "unsave", "取消收藏"), (value.can_pin && !value.pinned, "pin", "置顶消息"), (value.can_pin && value.pinned, "unpin", "取消置顶消息")],
+          &[(value.can_copy, "copy", "复制"), (value.can_link, "link", "复制消息链接"), (value.can_edit, "edit", "编辑"), (value.can_remind, "remind", "提醒我…"), (value.can_save && !value.saved, "save", "收藏"), (value.can_save && value.saved, "unsave", "取消收藏"), (value.can_pin && !value.pinned, "pin", "置顶消息"), (value.can_pin && value.pinned, "unpin", "取消置顶消息")],
           &[(value.can_recall, "recall", "撤回消息"), (value.can_remove, "remove", "删除消息（管理员）")],
         ];
         let mut first = true;

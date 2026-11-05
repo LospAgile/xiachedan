@@ -864,6 +864,14 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
+  // 消息链接：按消息标识找到所在会话和位置，供客户端跳转。没有权限与不存在一律返回 404，不泄露消息是否存在。
+  app.get('/api/message-location', (req, res) => {
+    const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(req.query.id);
+    const room = row && row.seq > clearedThroughSeq() && stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
+    if (!room || !canAccess(room, req.user.id)) throw fail('消息不存在或你无权查看', 404);
+    const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
+    res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
+  });
   // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
   app.get('/api/thread', (req, res) => {
     const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);

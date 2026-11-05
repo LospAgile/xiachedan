@@ -12,6 +12,7 @@ import useConversations from './useConversations';
 import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
+import { messageLink } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
 import useAppearance from './appearance';
@@ -354,16 +355,21 @@ export default function App() {
       if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'forward') setForwarding([latest.id]);
       if (action === 'select') setSelection([latest.id]);
+      if (action === 'link') {
+        const link = `${location.origin}${location.pathname}#msg=${encodeURIComponent(latest.roomId)}/${encodeURIComponent(latest.id)}`;
+        return (window.desktop?.copy ? window.desktop.copy(link) : navigator.clipboard.writeText(link)).then(() => notify('消息链接已复制')).catch(error => notify(error.message));
+      }
       if (action === 'copy' && !current.privateMode) {
         const copy = window.desktop?.copy ? window.desktop.copy(latest.text) : navigator.clipboard.writeText(latest.text);
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canReply, canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
+      ...(!message.recalledAt ? [{ id: 'link', label: '复制消息链接', action: () => act('link') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
       ...(canReply && !message.threadOf ? [{ id: 'thread', label: '在话题中回复', action: () => act('thread') }] : []),
       ...(canReply ? [{ id: 'remind', label: '提醒我…', action: () => act('remind') }] : []),
@@ -375,6 +381,21 @@ export default function App() {
   }
   // 长会话里每次更新只重渲染有变化的消息：传给 Message 的回调保持同一引用，调用时再取最新的状态和处理函数。
   const latest = useRef(null);
+  // 点聊天里的消息链接，或从外部打开带 #msg= 的地址：查到所在位置后跳过去。
+  useEffect(() => {
+    if (!state?.me?.id) return;
+    const fromAddress = () => {
+      const target = messageLink(location.href);
+      if (!target) return;
+      history.replaceState(null, '', location.pathname + location.search);
+      latest.current?.openMessageLink(target);
+    };
+    const open = event => latest.current?.openMessageLink(event.detail);
+    fromAddress();
+    window.addEventListener('hashchange', fromAddress);
+    window.addEventListener('linliao:open-message', open);
+    return () => { window.removeEventListener('hashchange', fromAddress); window.removeEventListener('linliao:open-message', open); };
+  }, [state?.me?.id]);
   const recipientsCache = useRef([]);
   const messageHandlers = useMemo(() => ({
     onContextMenu: (event, message) => latest.current.messageMenu(event, message),
@@ -406,6 +427,9 @@ export default function App() {
   const groupMembers = !room ? [] : room.kind === 'public' ? state.users.filter(user => !user.removed) : state.users.filter(user => !user.removed && room.members.includes(user.id));
   const online = state.users.filter(user => !user.removed && user.online);
   latest.current = { messageMenu, userMap, jumpToMessage, toggleReaction, votePoll, closePoll, openThread, markMessageRead, openProfile,
+    openMessageLink: async ({ id }) => {
+      try { jumpToMessage(await api(`message-location?id=${encodeURIComponent(id)}`)); } catch (error) { notify(error.message); }
+    },
     reEdit: message => { const saved = recalledTexts[message.id]; if (!saved) return; forgetRecalled(message.id); setInjectDraft({ roomId: message.roomId, text: saved.text, nonce: Date.now() }); } };
   // 群聊默认不显示自己的头像和名字，私聊默认双方都不显示；都可以在设置里打开。
   const showAvatar = mine => room?.kind === 'direct' ? chatPrefs.showBothInDirect : !mine || chatPrefs.showSelfInGroups;
