@@ -9,7 +9,7 @@ import { isSendKey, modKey } from './chatPrefs';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -175,6 +175,14 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     requestAnimationFrame(() => { const node = textarea.current; node?.focus({ preventScroll: true }); node?.setSelectionRange(node.value.length, node.value.length); });
   }, [editing?.id]);
   useEffect(() => { setPicker(null); setSlash(null); }, [room.id]);
+  // 撤回后「重新编辑」：原文放回对应会话的输入框，已有草稿时接在后面。
+  useEffect(() => {
+    if (!injectDraft) return;
+    const current = draftsRef.current[injectDraft.roomId]?.text || '';
+    const next = current ? `${current}\n${injectDraft.text}` : injectDraft.text;
+    if (injectDraft.roomId === room.id) pendingSelection.current = [next.length, next.length];
+    update(injectDraft.roomId, state => ({ ...state, text: next }));
+  }, [injectDraft?.nonce]);
   // 离开会话时把剩下的草稿交给侧栏，显示「[草稿]」。
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;
