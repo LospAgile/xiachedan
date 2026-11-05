@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, MessagesSquare, Users, Settings2, Search, Plus, Hash, Eye, EyeOff, WifiOff, UserPlus, ChevronLeft, ChevronRight, ArrowDown, ArrowUp, X, Check, LoaderCircle, RefreshCw, ShieldCheck, Pin, BellOff, Megaphone, PencilLine, LogOut, Crown, Bot, Images, Bookmark, Clock, CheckCheck, Download } from 'lucide-react';
-import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText } from './api';
+import { api, downloadExport, formatTime, mediaUrl, nativeTitlebar, seenText, uid } from './api';
 import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, OutboxMessage, ProfileCard, ReadDetail, longPressHandlers, consumeLongPress, pressEvent, nameColor } from './components';
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
@@ -256,10 +256,15 @@ export default function App() {
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
   }
-  async function forwardTo(target, merge = false) {
+  async function forwardTo(target, merge = false, comment = '') {
     const result = await api('forward', { roomId: target.id, messageIds: forwarding, merge });
     setSelection(null);
     if (target.id === selected) for (const message of result.messages) receive(message);
+    // 附言作为一条普通消息，跟在转发的内容之后。
+    if (comment) {
+      try { const { message } = await api('messages', { roomId: target.id, text: comment, clientId: uid() }); if (target.id === selected) receive(message); }
+      catch (error) { notify(`已转发，但附言没有发出：${error.message}`); await refresh(); return; }
+    }
     notify(`已转发到「${target.name}」`);
     await refresh();
   }

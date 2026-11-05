@@ -107,12 +107,13 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
   const [search, setSearch] = useState('');
   const [target, setTarget] = useState(null);
   const [merge, setMerge] = useState(false);
+  const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
   async function submit(event) {
     event.preventDefault(); setBusy(true); setError('');
-    try { await onForward(target, merge); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
+    try { await onForward(target, merge, comment.trim()); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
   }
   return <Modal title={`转发 ${count} 条消息`} subtitle={merge ? '合成一条「聊天记录」发过去，点开可以看到每条消息。' : '选择一个会话，消息会逐条发送过去。'} onClose={onClose}><form onSubmit={submit}>
     {count > 1 && <div className="segmented-control forward-mode" role="radiogroup" aria-label="转发方式">{[[false, '逐条转发'], [true, '合并转发']].map(([value, label]) => <button type="button" key={label} role="radio" aria-checked={merge === value} className={merge === value ? 'active' : ''} onClick={() => setMerge(value)}>{label}</button>)}</div>}
@@ -121,6 +122,7 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
       <input type="radio" name="forward-target" checked={target?.id === room.id} onChange={() => setTarget(room)} />{icon(room)}<span>{room.name}</span>
       <span className={`selection-check ${target?.id === room.id ? 'checked' : ''}`}>{target?.id === room.id && <Check size={13} />}</span></label>)}
       {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
+    {target && <input className="forward-comment" aria-label="附言" placeholder="附言（可选），会在转发的消息之后发出" maxLength={2000} value={comment} onChange={event => setComment(event.target.value)} />}
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !target}>{busy ? '正在转发…' : target ? `转发到「${target.name}」` : '转发'}<ArrowRight size={16} /></button></div>
   </form></Modal>;
