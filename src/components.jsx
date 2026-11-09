@@ -272,6 +272,14 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const [visible, setVisible] = useState(false);
   const bubble = useRef(null);
   const press = useRef({ timer: 0, fired: false });
+  const lastTap = useRef(null);
+  // 有的手机浏览器在两次轻点后还会发出双击事件：短时间内只点一次 👍，避免点上又被取消。
+  const reactedAt = useRef(0);
+  const thumbsUp = () => {
+    if (Date.now() - reactedAt.current < 600) return;
+    reactedAt.current = Date.now();
+    if (!(message.reactions || []).some(item => item.emoji === '👍' && item.users.includes(viewerId))) onReact?.(message, '👍');
+  };
   const mounted = useRef(false);
   // 刚被撤回的那一刻气泡还在页面上，趁换成提示行之前让它粉碎。
   const recalledBefore = useRef(Boolean(message.recalledAt));
@@ -373,7 +381,14 @@ export const Message = React.memo(function Message({ message, user, mine, contin
           // 双击气泡点 👍；双击链接、按钮、图片和附件时照常。
           if (event.target.closest('a, button, input, img, video, .attachment, .code-block')) return;
           window.getSelection()?.removeAllRanges();
-          if (!(message.reactions || []).some(item => item.emoji === '👍' && item.users.includes(viewerId))) onReact?.(message, '👍');
+          thumbsUp();
+        } : undefined}
+        onPointerUp={quickReact && reactionOptions.length > 0 ? event => {
+          // 触屏上手机浏览器不一定发出双击事件：自己判断两次轻点（300 毫秒内、位置相近）。
+          if (event.pointerType !== 'touch' || event.target.closest('a, button, input, img, video, .attachment, .code-block')) return;
+          const last = lastTap.current, now = { time: event.timeStamp, x: event.clientX, y: event.clientY };
+          lastTap.current = now;
+          if (last && now.time - last.time < 300 && Math.hypot(now.x - last.x, now.y - last.y) < 24) { lastTap.current = null; thumbsUp(); }
         } : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}

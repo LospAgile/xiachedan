@@ -17,7 +17,7 @@ import { SettingsDialog } from './Settings';
 import { syncPush } from './push';
 import { useAppLock, LockScreen, finishLockReset } from './AppLock';
 import { TextPreviewDialog, openPdf, previewKind } from './FilePreview';
-import { messageLink, groupInviteLink } from './markdown';
+import { messageLink, groupInviteLink, plainText } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
 import useAppearance from './appearance';
@@ -61,6 +61,9 @@ export default function App() {
   const [clearing, setClearing] = useState(null);
   // 推荐名片：要推荐的成员。
   const [sharingCard, setSharingCard] = useState(null);
+  // 触屏上长按会弹出菜单、没法选字：在弹窗里选要引用的那一段。
+  const [quoting, setQuoting] = useState(null);
+  const quoteArea = useRef(null);
   // 文件预览：文本和代码在弹窗里看，PDF 在新标签页打开。
   const [filePreview, setFilePreview] = useState(null);
   // 当前会话的置顶消息；横条依次显示，点一下跳到那条消息并换到下一条。
@@ -488,6 +491,7 @@ export default function App() {
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
       if (action === 'hide') setHiding([latest.id]);
+      if (action === 'quote-part') setQuoting(latest);
       if (action === 'sticker') return addStickers(latest);
       if (action === 'remove') setRemovingMessage(latest);
       if (action === 'pin' || action === 'unpin') togglePin(latest, action === 'pin');
@@ -512,6 +516,7 @@ export default function App() {
     showContextMenu(event, { kind: 'message', canSticker: images.length > 0, canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply && !message.card, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply && !inThread ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
+      ...(!quote && canReply && !inThread && !privateMode && message.text && matchMedia('(pointer: coarse)').matches ? [{ id: 'quote-part', label: '引用部分文字…', action: () => act('quote-part') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [...(message.card ? [] : [{ id: 'forward', label: '转发', action: () => act('forward') }]), ...(inThread ? [] : [{ id: 'select', label: '多选', action: () => act('select') }])] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
@@ -724,7 +729,7 @@ export default function App() {
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
       <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={BookUser} label="通讯录" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={BookUser} label="通讯录" className="contacts-entry" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
         {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
@@ -910,6 +915,11 @@ export default function App() {
     {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
+    {quoting && <Modal title="引用部分文字" subtitle="选中要引用的那一段，再点「引用」；不选就引用整条。" onClose={() => setQuoting(null)}>
+      <textarea ref={quoteArea} className="quote-select" aria-label="消息内容" readOnly rows={6} value={plainText(quoting.text)} />
+      <div className="modal-footer"><button type="button" className="secondary-button" onClick={() => setQuoting(null)}>取消</button>
+        <button type="button" className="primary-button" onClick={() => { const node = quoteArea.current, part = node.value.slice(node.selectionStart, node.selectionEnd).trim(); setEditing(null); setReplying({ roomId: quoting.roomId, id: quoting.id, quote: part.slice(0, 500) }); setQuoting(null); }}>引用</button></div>
+    </Modal>}
     {filePreview && <TextPreviewDialog file={filePreview} onClose={() => setFilePreview(null)} />}
     {sharingCard && <ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
       onForward={async (targets, _merge, comment) => {

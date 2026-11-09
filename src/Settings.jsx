@@ -112,7 +112,7 @@ export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, them
     about: <>
       {window.desktop?.updates ? <UpdateSettings update={update} onUpdate={onUpdate} notify={notify} />
         : <p className="inline-note">网页版随空间服务器一起更新，刷新页面即可使用最新版本。</p>}
-      {onShortcuts && <SettingRow title="键盘快捷键" description={`随时按 ${modKey} / 查看。`}><button type="button" className="secondary-button" onClick={onShortcuts}>查看</button></SettingRow>}
+      {onShortcuts && !matchMedia('(pointer: coarse)').matches && <SettingRow title="键盘快捷键" description={`随时按 ${modKey} / 查看。`}><button type="button" className="secondary-button" onClick={onShortcuts}>查看</button></SettingRow>}
     </>,
   };
   const current = SECTIONS.find(([id]) => id === tab) || SECTIONS[0];

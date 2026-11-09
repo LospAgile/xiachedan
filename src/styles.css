@@ -289,7 +289,7 @@ textarea { resize: none; line-height: 20px; }
 .message-meta { display: flex; align-items: baseline; gap: 6px; padding-left: 4px; }
 .message-meta span { font-size: 12px; line-height: 15px; font-weight: 600; }
 .message-meta time, .message-status { font-size: 10px; line-height: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.message-bubble { position: relative; max-width: 100%; padding: 7px 11px 8px; border-radius: 18px; background: var(--bubble-in); box-shadow: var(--bubble-shadow); font-size: var(--chat-font, 14px); line-height: 1.43; overflow-wrap: anywhere; }
+.message-bubble { touch-action: manipulation; position: relative; max-width: 100%; padding: 7px 11px 8px; border-radius: 18px; background: var(--bubble-in); box-shadow: var(--bubble-shadow); font-size: var(--chat-font, 14px); line-height: 1.43; overflow-wrap: anywhere; }
 /* 连续消息相邻处收小圆角，最后一条在头像一侧做出「尾巴」 */
 .message-row:not(.mine).continued .message-bubble { border-top-left-radius: 6px; }
 .message-row:not(.mine):not(.last) .message-bubble { border-bottom-left-radius: 6px; }
@@ -1315,3 +1315,4 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .cropper-mask { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgba(0, 0, 0, .45); outline: 2px solid rgba(255, 255, 255, .8); pointer-events: none; }
 .cropper-zoom { display: flex; align-items: center; gap: 8px; width: 280px; color: var(--text-2); }
 .cropper-zoom input { flex: 1; accent-color: var(--accent); }
+.quote-select { width: 100%; min-height: 120px; padding: 10px 12px; border-radius: 12px; background: var(--fill-1); font-size: 15px; line-height: 1.5; resize: none; -webkit-user-select: text; user-select: text; }
