@@ -151,11 +151,11 @@ function Attachment({ file, privateMode, onPreview }) {
     playback.current = null;
   };
   if (!/^(image|video)\//.test(file.mime)) return <FileCard file={file} />;
-  return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'}`}>
+  return <div className={`attachment ${file.mime.startsWith('image/') ? 'image-attachment' : 'video-attachment'} ${file.sticker ? 'sticker-attachment' : ''}`}>
     {file.mime.startsWith('image/') ? <button className="image-button" type="button" onClick={() => !privateMode && onPreview(file)} aria-label={privateMode ? '图片内容' : '放大查看图片'}><img src={mediaUrl(file.thumbId || file.id)} alt={file.name} loading="lazy" /></button> : <>
       {failed ? <div className="video-fallback"><Film size={26} /><p>这个视频格式暂时无法预览</p><a href={mediaUrl(file.id, true)} download={file.name}>下载后播放<ArrowUpRight size={14} /></a></div> : <video ref={video} src={videoSource} controls preload="metadata" playsInline onLoadedMetadata={restorePlayback} onError={() => setFailed(true)} />}
     </>}
-    <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download={file.name} title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>
+    {!file.sticker && <div className="attachment-caption"><span>{file.mime.startsWith('image/') ? <ImageIcon size={13} /> : <Film size={13} />}{file.name}</span><small>{formatSize(file.size)}</small><a href={mediaUrl(file.id, true)} download={file.name} title="下载文件" aria-label="下载文件"><Download size={14} /></a></div>}
   </div>;
 }
 
@@ -321,7 +321,9 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   const album = media.length > 1;
   // 话题入口放在气泡里，宽度跟着气泡走。
   const threadLink = message.thread && onOpenThread && <button type="button" className="thread-link" onClick={() => onOpenThread(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>;
-  const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
+  // 只有一个表情、没有文字时，不画气泡底色。
+  const stickerOnly = !message.text && message.attachments.length === 1 && Boolean(message.attachments[0].sticker);
+  const bubbleClass = `message-bubble ${stickerOnly ? 'sticker-bubble' : ''} ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
     {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
       ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{!mine && <StatusEmoji user={user} />}{message.bot && <small className="bot-tag">机器人</small>}</div>}

@@ -865,6 +865,54 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
     res.json({ keywords });
   });
+  // 自定义表情：把聊天里的图片收藏成自己的表情（另存一份，原消息删掉也不影响），换设备也在。
+  const STICKER_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+  const stickersFor = userId => stmt('SELECT u.id, u.name, u.mime FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.user_id=? ORDER BY s.created_at DESC').all(userId);
+  const linkUpload = (source, fields) => {
+    const id = randomUUID();
+    try { linkSync(path.join(uploadDir, source.id), path.join(uploadDir, id)); } catch { copyFileSync(path.join(uploadDir, source.id), path.join(uploadDir, id)); }
+    stmt('INSERT INTO uploads (id,owner_id,room_id,name,mime,size,purpose,claimed,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(id, fields.owner, fields.room ?? null, source.name, source.mime, source.size, fields.purpose, fields.claimed, Date.now());
+    return id;
+  };
+  const checkBudget = size => {
+    if (cloud && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n + size > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
+  };
+  app.get('/api/stickers', (req, res) => res.json({ stickers: stickersFor(req.user.id) }));
+  app.post('/api/stickers', (req, res) => {
+    rateLimit(req, 'stickers', 30);
+    const file = typeof req.body?.fileId === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.body.fileId);
+    if (!file || file.purpose !== 'message' || !file.claimed) throw fail('图片不存在', 404);
+    requireRoom(file.room_id, req.user.id);
+    if (!STICKER_MIMES.includes(file.mime)) throw fail('只能把图片添加为表情');
+    if (file.size > 5 * 1024 * 1024) throw fail('表情图片不能超过 5 MB');
+    if (stmt('SELECT COUNT(*) AS n FROM user_stickers WHERE user_id=?').get(req.user.id).n >= 120) throw fail('最多收藏 120 个表情，先删掉一些');
+    checkBudget(file.size);
+    const id = linkUpload(file, { owner: req.user.id, purpose: 'sticker', claimed: 1 });
+    stmt('INSERT INTO user_stickers VALUES (?,?,?)').run(id, req.user.id, Date.now());
+    deliver({ type: 'stickers' }, socket => socket.userId === req.user.id);
+    res.status(201).json({ stickers: stickersFor(req.user.id) });
+  });
+  app.post('/api/stickers/delete', (req, res) => {
+    const row = typeof req.body?.id === 'string' && stmt('SELECT * FROM user_stickers WHERE id=? AND user_id=?').get(req.body.id, req.user.id);
+    if (!row) throw fail('表情不存在', 404);
+    stmt('DELETE FROM user_stickers WHERE id=?').run(row.id);
+    stmt('DELETE FROM uploads WHERE id=?').run(row.id);
+    stmt('INSERT OR IGNORE INTO pending_file_deletions (id) VALUES (?)').run(row.id);
+    deliver({ type: 'stickers' }, socket => socket.userId === req.user.id);
+    res.json({ stickers: stickersFor(req.user.id) });
+  });
+  // 发表情：先为目标会话另存一份附件，再像普通图片一样发送（可以排队、可以在话题里发）。
+  app.post('/api/stickers/use', (req, res) => {
+    rateLimit(req, 'sticker-use', 60);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const sticker = typeof req.body?.id === 'string' && stmt('SELECT u.* FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.id=? AND s.user_id=?').get(req.body.id, req.user.id);
+    if (!sticker) throw fail('表情不存在', 404);
+    checkBudget(sticker.size);
+    const id = linkUpload(sticker, { owner: req.user.id, room: room.id, purpose: 'message', claimed: 0 });
+    stmt('INSERT INTO upload_stickers VALUES (?)').run(id);
+    res.status(201).json({ attachment: { id, name: sticker.name, mime: sticker.mime, size: sticker.size } });
+  });
   // 只对自己删除消息：别人照常能看到；顺带去掉自己的收藏和提醒。
   app.post('/api/messages/hide', (req, res) => {
     rateLimit(req, 'hide', 60);
@@ -1694,7 +1742,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const file = stmt('SELECT * FROM uploads WHERE id=?').get(id);
       if (!file || file.owner_id !== req.user.id || file.room_id !== room.id || file.purpose !== 'message' || file.claimed) throw fail('附件不可用，请重新选择');
       const thumb = stmt('SELECT thumb_id FROM upload_thumbnails WHERE upload_id=?').get(file.id)?.thumb_id;
-      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}) };
+      const sticker = Boolean(stmt('SELECT 1 FROM upload_stickers WHERE upload_id=?').get(file.id));
+      return { id: file.id, name: file.name, mime: file.mime, size: file.size, ...(thumb ? { thumbId: thumb } : {}), ...(sticker ? { sticker: true } : {}) };
     });
     if (!messageText && !attachments.length) throw fail('消息不能为空');
     // 只能引用同一会话里仍然可见的消息，避免借引用读取其他会话的内容。
@@ -1764,6 +1813,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   app.get('/api/media', (req, res) => {
     const file = typeof req.query.id === 'string' && stmt('SELECT * FROM uploads WHERE id=?').get(req.query.id);
     if (!file) throw fail('文件不存在', 404);
+    if (file.purpose === 'sticker' && file.owner_id !== req.user.id) throw fail('文件不存在', 404);
     if (file.purpose === 'message' || file.purpose === 'thumbnail' || file.purpose === 'room-avatar') {
       requireRoom(file.room_id, req.user.id);
       if (!file.claimed && file.owner_id !== req.user.id) throw fail('文件尚未发送', 403);

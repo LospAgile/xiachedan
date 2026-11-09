@@ -441,6 +441,12 @@ export default function App() {
       { id: 'remove', label: '移除对话', action: () => conversationAction('remove', target.id, conversationScope) },
     ], '对话操作');
   }
+  // 把消息里的图片收藏成自己的表情（相册里的每张都加）。
+  async function addStickers(message) {
+    const images = message.attachments.filter(file => /^image\/(png|jpeg|webp|gif)$/.test(file.mime));
+    try { for (const file of images) await api('stickers', { fileId: file.id }); notify(images.length > 1 ? `已添加 ${images.length} 个表情` : '已添加到表情'); }
+    catch (error) { notify(error.message); }
+  }
   function messageMenu(event, message) {
     const canCopy = Boolean(message.text) && !privateMode;
     const own = message.senderId === state.me.id && !message.recalledAt;
@@ -465,6 +471,7 @@ export default function App() {
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
       if (action === 'hide') setHiding([latest.id]);
+      if (action === 'sticker') return addStickers(latest);
       if (action === 'remove') setRemovingMessage(latest);
       if (action === 'pin' || action === 'unpin') togglePin(latest, action === 'pin');
       if (action === 'save' || action === 'unsave') toggleSaved(latest, action === 'save');
@@ -484,13 +491,15 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+    const images = !privateMode && !message.recalledAt ? message.attachments.filter(file => /^image\/(png|jpeg|webp|gif)$/.test(file.mime)) : [];
+    showContextMenu(event, { kind: 'message', canSticker: images.length > 0, canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply && !inThread ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
       ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, ...(inThread ? [] : [{ id: 'select', label: '多选', action: () => act('select') }])] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(!message.recalledAt ? [{ id: 'link', label: '复制消息链接', action: () => act('link') }] : []),
+      ...(images.length ? [{ id: 'sticker', label: '添加到表情', action: () => act('sticker') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
       ...(canReply && !message.threadOf ? [{ id: 'thread', label: '在话题中回复', action: () => act('thread') }] : []),
       ...(canReply ? [{ id: 'remind', label: '提醒我…', action: () => act('remind') }] : []),
