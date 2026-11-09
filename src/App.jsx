@@ -64,6 +64,10 @@ export default function App() {
   const [scheduleText, setScheduleText] = useState(null);
   // 打开着的话题（根消息标识），显示在右侧面板。
   const [threadRoot, setThreadRoot] = useState(null);
+  // 话题面板里正在编辑的回复，以及面板当前加载的消息（右键菜单据此找到话题里的消息）。
+  const [threadEditing, setThreadEditing] = useState(null);
+  const threadMessages = useRef([]);
+  useEffect(() => setThreadEditing(null), [threadRoot]);
   const [mutingUser, setMutingUser] = useState(null);
   const [openBundle, setOpenBundle] = useState(null);
   const [reminding, setReminding] = useState(null);
@@ -419,18 +423,20 @@ export default function App() {
     const canCopy = Boolean(message.text) && !privateMode;
     const canRecall = message.senderId === state.me.id && !message.recalledAt;
     const canReply = !message.recalledAt && !message.nudge;
-    const quote = canReply && !privateMode ? selectedQuote(message.id) : '';
+    // 话题里的回复不在主时间线上：不能在主输入框回复、多选或置顶。
+    const inThread = Boolean(message.threadOf);
+    const quote = canReply && !inThread && !privateMode ? selectedQuote(message.id) : '';
     const canReact = canReply && Boolean(state.reactions?.length);
     const canEdit = canRecall && !message.poll && !message.nudge;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
-    const canPin = pins.roomId === message.roomId && pins.canPin && !message.recalledAt && !message.nudge;
+    const canPin = !inThread && pins.roomId === message.roomId && pins.canPin && !message.recalledAt && !message.nudge;
     const pinned = pins.pins.some(item => item.message.id === message.id);
     const isSaved = saved.some(item => item.message.id === message.id);
     const act = action => {
       const current = messageContext.current;
       if (current.scope !== conversationScope) return;
-      const latest = current.messages[message.roomId]?.find(item => item.id === message.id);
+      const latest = current.messages[message.roomId]?.find(item => item.id === message.id) || threadMessages.current.find(item => item.id === message.id);
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
       if (action === 'remove') setRemovingMessage(latest);
@@ -440,7 +446,7 @@ export default function App() {
       if (action === 'thread') openThread(latest.id);
       if (action === 'reply' || action === 'quote') { setEditing(null); setReplying({ roomId: latest.roomId, id: latest.id, quote: action === 'quote' ? quote : '' }); }
       if (action === 'react') setReactingTo(latest.id);
-      if (action === 'edit') { setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
+      if (action === 'edit') { if (latest.threadOf) { setThreadEditing(latest); return; } setReplying(null); setEditing({ roomId: latest.roomId, id: latest.id }); }
       if (action === 'forward') setForwarding([latest.id]);
       if (action === 'select') setSelection([latest.id]);
       if (action === 'link') {
@@ -452,11 +458,11 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
-      ...(canReply ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
+    showContextMenu(event, { kind: 'message', canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+      ...(canReply && !inThread ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
-      ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, { id: 'select', label: '多选', action: () => act('select') }] : []),
+      ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, ...(inThread ? [] : [{ id: 'select', label: '多选', action: () => act('select') }])] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(!message.recalledAt ? [{ id: 'link', label: '复制消息链接', action: () => act('link') }] : []),
       ...(canEdit ? [{ id: 'edit', label: '编辑', action: () => act('edit') }] : []),
@@ -720,7 +726,7 @@ export default function App() {
           reactionOptions={state.reactions || NO_REACTIONS} picking={reactingTo === message.id} selecting={Boolean(selection)} selected={Boolean(selection?.includes(message.id))}
           user={userOf(message)} grouped mine={message.senderId === state.me.id} continued={position > 0} last={position === group.messages.length - 1} privateMode={privateMode} viewerId={state.me.id}
           readingEnabled={(windowActive || privateMode) && !modal && !removing && !recalling && !contextMenu && !preview && !loading} recipients={recipientsCache.current} direct={room.kind === 'direct'} />)}</div>{mine && avatar}</div></React.Fragment>; })}
-        {outbox.items.filter(item => item.roomId === room.id).map(item => <OutboxMessage key={item.clientId} item={item} avatarColumn={showAvatar(true)} onRetry={outbox.retry} onDiscard={outbox.discard} />)}
+        {outbox.items.filter(item => item.roomId === room.id && !item.payload.threadOf).map(item => <OutboxMessage key={item.clientId} item={item} avatarColumn={showAvatar(true)} onRetry={outbox.retry} onDiscard={outbox.discard} />)}
       </div></div>{unreadMentions.length > 0 && <button type="button" className="jump-to-mention glass" aria-label={`跳到提到你的消息，还有 ${unreadMentions.length} 条`} title="跳到提到你的消息" onClick={() => jumpToMessage(unreadMentions[0])}><AtSign size={18} /><span className="mention-count">{unreadMentions.length > 99 ? '99+' : unreadMentions.length}</span></button>}{scrolledUp && <button className="jump-to-latest glass" onClick={() => { sticky.current = true; messageList.current.scrollTo({ top: messageList.current.scrollHeight, behavior: 'smooth' }); }}><ArrowDown size={14} />{arrivedWhileAway ? `${arrivedWhileAway} 条新消息` : '回到最新消息'}</button>}
       {unreadAnchor?.roomId === selected && <button className="unread-anchor glass" onClick={jumpToFirstUnread}><ArrowUp size={14} />{unreadAnchor.count ? `${unreadAnchor.count} 条未读消息` : '跳到未读消息'}</button>}
       {selection ? <div className="selection-bar glass" role="toolbar" aria-label="多选消息">
@@ -734,7 +740,12 @@ export default function App() {
         onEditLast={() => { if (lastOwn) { setReplying(null); setEditing({ roomId: lastOwn.roomId, id: lastOwn.id }); } }}
         reply={replyTarget} replyAuthor={replyTarget && (replyTarget.senderId === state.me.id ? '自己' : userMap[replyTarget.senderId]?.name || '成员')} onCancelReply={() => setReplying(null)} />}</section>
       {showMembers && <aside className="members-panel glass" aria-label={panelView === 'history' ? '聊天记录' : panelView === 'files' ? '图片与文件' : panelView === 'thread' ? '话题' : '会话成员'}>{panelView === 'thread' && threadRoot
-        ? <ThreadPanel key={threadRoot} sendKey={chatPrefs.sendKey} rootId={threadRoot} userMap={userMap} viewerId={state.me.id} privateMode={privateMode} threadTick={threadTick} onBack={() => setPanelView('members')} notify={notify} />
+        ? <ThreadPanel key={threadRoot} rootId={threadRoot} room={room} viewerId={state.me.id} privateMode={privateMode} threadTick={threadTick} onBack={() => setPanelView('members')} notify={notify}
+          onLoaded={items => { threadMessages.current = items; }} handlers={messageHandlers} userOf={userOf} reactionOptions={state.reactions || NO_REACTIONS} reactingTo={reactingTo} quickReact={chatPrefs.quickReact}
+          blocked={room.kind === 'group' && room.allMuted && !isGroupManager ? '全员禁言中，只有群主和管理员可以发言' : state.me.muted ? '你已被管理员禁言' : ''}
+          composer={{ connected, notify, privateMode, sendKey: chatPrefs.sendKey, members: room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id), canMentionAll: room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin)) }}
+          outbox={outbox} editing={threadEditing && !threadEditing.recalledAt ? threadEditing : null} onCancelEdit={() => setThreadEditing(null)} onEdited={message => { applyEdit(message); setThreadEditing(null); }}
+          onEditLast={() => { const own = threadMessages.current.findLast(item => item.threadOf && item.senderId === state.me.id && !item.recalledAt); if (own) setThreadEditing(own); }} />
         : panelView === 'files'
         ? <RoomFiles room={room} userMap={userMap} privateMode={privateMode} historyVersion={historyVersion} onBack={() => setPanelView('members')} onPreview={setPreview} onJump={jumpToMessage} />
         : panelView === 'history'

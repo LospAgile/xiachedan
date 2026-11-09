@@ -82,14 +82,20 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       .map(([roomId, users]) => [roomId, Object.fromEntries(Object.entries(users).filter(([, until]) => until > Date.now()))]))), 1000);
     return () => clearInterval(timer);
   }, [typing]);
+  // 回应、投票、编辑和撤回也可能发生在话题里：通知打开着的话题面板重新读取（rootId 为 * 表示任意话题）。
+  const touchThread = () => setThreadTick(tick => ({ rootId: '*', n: tick.n + 1 }));
   const applyReactions = useCallback(({ roomId, messageId, reactions }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, reactions } : message) } : previous);
+    touchThread();
   }, []);
   const applyPoll = useCallback(({ roomId, messageId, poll }) => {
     setMessages(previous => previous[roomId] ? { ...previous, [roomId]: previous[roomId].map(message => message.id === messageId ? { ...message, poll } : message) } : previous);
+    touchThread();
   }, []);
   // 编辑后的消息只替换正文等字段，不当作新消息提醒；侧栏预览也跟着更新。
   const applyEdit = useCallback(message => {
+    // 话题里的回复不在主时间线上：只让话题面板刷新，不并进主聊天。
+    if (message.threadOf) { touchThread(); return; }
     setMessages(previous => previous[message.roomId] ? { ...previous, [message.roomId]: merge(previous[message.roomId], [message], historyRef.current) } : previous);
     setState(previous => previous ? { ...previous, rooms: previous.rooms.map(room => room.lastMessage?.id === message.id ? { ...room, lastMessage: { ...room.lastMessage, ...message } } : room) } : previous);
   }, []);

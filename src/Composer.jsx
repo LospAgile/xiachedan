@@ -12,7 +12,7 @@ import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, placeholder }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -252,7 +252,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     {emojiOpen && <EmojiPicker onPick={insertText} onClose={() => setEmojiOpen(false)} />}
     <div className={`composer ${dragging ? 'dragging' : ''}`} onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false); }} onDrop={event => { event.preventDefault(); setDragging(false); if (!sending) addFiles(event.dataTransfer.files); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={18} /><span>松开鼠标，发送文件</span></div>}
-      <textarea ref={textarea} aria-label="消息内容" placeholder={`发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
+      <textarea ref={textarea} aria-label="消息内容" placeholder={placeholder || `发消息到 ${room.name}`} value={editing ? editText : draft.text} readOnly={sending} aria-busy={sending} maxLength={10000} rows={1}
         aria-autocomplete="list" aria-controls={slashOptions.length ? 'slash-picker' : 'mention-picker'} aria-expanded={Boolean(slashOptions.length || (picker && candidates.length))}
         aria-activedescendant={slashOptions.length ? `slash-option-${slash.index}` : picker && candidates.length ? `mention-option-${picker.index}` : undefined}
         onChange={event => {

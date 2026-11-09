@@ -319,6 +319,8 @@ export const Message = React.memo(function Message({ message, user, mine, contin
   // 两个及以上的图片或视频排成相册网格，其他文件照常列在下面。
   const media = message.attachments.filter(file => /^(image|video)\//.test(file.mime));
   const album = media.length > 1;
+  // 话题入口放在气泡里，宽度跟着气泡走。
+  const threadLink = message.thread && onOpenThread && <button type="button" className="thread-link" onClick={() => onOpenThread(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>;
   const bubbleClass = `message-bubble ${hidden ? 'is-masked' : ''} ${message.attachments.length ? 'has-media' : ''} ${mediaLast ? 'media-last' : ''} ${album ? 'has-album' : ''}`;
   const content = hidden ? <div className="masked-message"><span>****</span><EyeOff size={13} />{meta}</div> : <>
     {showName && <div className="bubble-name" style={mine ? undefined : { color: nameColor(message.senderId, user) }}>{user && !message.bot && onOpenProfile && !selecting
@@ -359,14 +361,13 @@ export const Message = React.memo(function Message({ message, user, mine, contin
         } : undefined}
         onPointerEnter={reveal} onPointerMove={reveal} onPointerLeave={() => setRevealed(false)} onBlur={() => setRevealed(false)}
         onKeyDown={event => { if (event.code === 'Space' && privateMode) { event.preventDefault(); setRevealed(true); } }} onKeyUp={event => { if (event.code === 'Space') setRevealed(false); }}
-        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}</div>
-      {onReply && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
+        aria-label={hidden ? '内容已隐藏，悬停或按住空格查看' : undefined}>{content}{threadLink}</div>
+      {(onReply || onPick) && <div className={`message-actions ${picking ? 'open' : ''}`} onMouseDown={event => { if (event.target.closest('.icon-button')) event.preventDefault(); }}>
         {reactionOptions.length > 0 && <IconButton icon={SmilePlus} label="回应" size={14} aria-expanded={picking} onClick={() => onPick?.(picking ? null : message.id)} />}
-        <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />
+        {onReply && <IconButton icon={Reply} label="回复" size={14} onClick={() => onReply(message)} />}
         {picking && <ReactionPalette options={reactionOptions} chosen={(message.reactions || []).filter(item => item.users.includes(viewerId)).map(item => item.emoji)} onPick={emoji => onReact?.(message, emoji)} onClose={() => onPick?.(null)} />}
       </div>}</div>
       {readNode && <div className="read-line">{readNode}</div>}
-      {message.thread && !selecting && <button type="button" className="thread-link" onClick={() => onOpenThread?.(message)}><MessagesSquare size={13} />{message.thread.count} 条回复<time>最后 {formatTime(message.thread.lastAt)}</time></button>}
     </div>
     {mine && avatar}
   </article>;
