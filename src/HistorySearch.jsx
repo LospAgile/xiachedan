@@ -40,11 +40,11 @@ export function useMessageSearch(term, roomId, historyVersion, enabled = true, f
   return { results, error };
 }
 
-export function SearchResult({ message, term, avatar, title, prefix = '', privateMode, onJump }) {
+export function SearchResult({ message, term, avatar, title, prefix = '', privateMode, onJump, at }) {
   const text = prefix + searchText(message);
   return <button type="button" className="history-result" onClick={() => onJump(message)}>
     {avatar}
-    <span className="history-copy"><span className="history-meta"><b>{title}</b><time>{stamp(message.createdAt)}</time></span>
+    <span className="history-copy"><span className="history-meta"><b>{title}</b><time>{stamp(at || message.createdAt)}</time></span>
       <span className="history-text">{privateMode ? <PrivatePreview privateMode>{text}</PrivatePreview> : <Highlight text={text} query={term} />}</span></span>
   </button>;
 }

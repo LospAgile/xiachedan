@@ -62,6 +62,16 @@ export default function App() {
   const [pinIndex, setPinIndex] = useState(0);
   // 自己收藏的消息：菜单据此显示「收藏 / 取消收藏」，收藏夹弹窗列出全部。
   const [saved, setSaved] = useState([]);
+  // 「提到我的」：@我、回复我、回应我的消息，打开时读取，可以继续往前翻。
+  const [activity, setActivity] = useState(null);
+  async function loadActivity(more = false) {
+    const before = more ? activity?.items.at(-1)?.at : undefined;
+    try {
+      const result = await api(`activity${before ? `?before=${before}` : ''}`);
+      setActivity(previous => ({ items: more && previous ? [...previous.items, ...result.items] : result.items, hasMore: result.hasMore }));
+    } catch (error) { notify(error.message); setActivity(previous => previous || { items: [], hasMore: false }); }
+  }
+  useEffect(() => { if (modal === 'activity') loadActivity(); }, [modal]);
   // 当前会话里自己还没发出的定时消息、正在设置提醒的消息。
   const [scheduled, setScheduled] = useState({ roomId: null, items: [] });
   const [scheduleText, setScheduleText] = useState(null);
@@ -688,7 +698,7 @@ export default function App() {
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
       <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
-      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={BookUser} label="通讯录" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
+      <div className="space-heading" data-drag-region><div className="space-copy"><h1>{state.workspace.name}</h1><p><i className={`status-dot ${connected ? 'online' : ''}`} />{online.length} 人在线</p></div><span className="space-actions">{rooms.some(target => !target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) && <IconButton icon={CheckCheck} label="全部标为已读" onClick={() => { for (const target of rooms) if (!target.hidden && (unread[target.id]?.hasUnread || target.markedUnread)) markRead(target); notify('已全部标为已读'); }} />}<IconButton icon={BookUser} label="通讯录" onClick={() => { setContactQuery(''); setModal('members'); }} /><IconButton icon={AtSign} label="提到我的" onClick={() => { setActivity(null); setModal('activity'); }} /><IconButton icon={Bookmark} label="收藏" onClick={() => setModal('saved')} /><IconButton icon={UserPlus} label="邀请同事" onClick={() => setModal('invite')} /></span></div>
       <label className="sidebar-search"><Search size={14} /><input aria-label="搜索会话和消息" placeholder="搜索会话和消息" value={search} onChange={event => setSearch(event.target.value)} />{search ? <IconButton icon={X} label="清空搜索" size={14} onClick={() => setSearch('')} /> : <button type="button" className="switch-hint" onClick={() => setSwitcher(true)} title="快速切换会话">{switchKey}</button>}</label>
       {!compact && <div className="folder-bar"><div className="folder-tabs" role="tablist" aria-label="会话分组">{folderTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={tab.id === tabKey} className={tab.id === tabKey ? 'active' : ''} onClick={() => chooseFolderTab(tab.id)}>
         {tab.label}{tab.unread > 0 && <span className="folder-unread">{tab.unread > 99 ? '99+' : tab.unread}</span>}</button>)}</div>
@@ -845,6 +855,17 @@ export default function App() {
     {modal === 'scheduled' && <ScheduledListDialog items={scheduled.items} onClose={() => setModal(null)} onCancel={async item => { try { await api('scheduled/cancel', { id: item.id }); await loadScheduled(item.roomId); notify('已取消发送'); } catch (error) { notify(error.message); } }} />}
     {reminding && <ReminderDialog message={reminding} notify={notify} onClose={() => setReminding(null)} />}
     {modal === 'poll' && room && <PollDialog room={room} onClose={() => setModal(null)} onCreated={message => { sticky.current = true; receive(message); }} />}
+    {modal === 'activity' && <Modal title="提到我的" subtitle="别人 @你、回复你、回应你的消息。点一条回到原来的位置。" onClose={() => setModal(null)}>
+      {!activity ? <p className="inline-note">正在读取…</p> : !activity.items.length ? <p className="inline-note">还没有人提到你。</p> : <div className="history-results saved-list">
+        {activity.items.map(item => {
+          const actor = displayUser(userMap[item.actorId]), target = rooms.find(candidate => candidate.id === item.message.roomId);
+          const verb = { mention: '@了你', reply: '回复了你', thread: '在话题里回复了你', reaction: `回应了 ${item.emoji}` }[item.kind];
+          return <SearchResult key={`${item.kind}:${item.message.id}:${item.actorId}:${item.emoji || ''}`} message={item.message} term="" at={item.at} prefix={item.kind === 'reaction' ? '你的消息：' : ''}
+            avatar={<Avatar user={actor} size={24} />} title={`${actor?.name || '成员'} ${verb}${target ? ` · ${target.name}` : ''}`} privateMode={privateMode} onJump={message => { setModal(null); jumpToMessage(message); }} />;
+        })}
+        {activity.hasMore && <button type="button" className="text-button load-more" onClick={() => loadActivity(true)}>加载更多</button>}
+      </div>}
+    </Modal>}
     {modal === 'saved' && <Modal title="收藏" subtitle="只有你自己看得到。点一条可以回到原来的会话。" onClose={() => setModal(null)}>
       {!saved.length ? <p className="inline-note">还没有收藏。在消息上点右键，选「收藏」。</p> : <div className="history-results saved-list">{saved.map(item => {
         const target = rooms.find(candidate => candidate.id === item.message.roomId);

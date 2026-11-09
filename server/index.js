@@ -1219,6 +1219,33 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
     res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
   });
+  // 「提到我的」：别人 @我（含 @所有人）、回复我、在话题里回复我、回应我的消息，按时间倒序，每页 50 条。
+  app.get('/api/activity', (req, res) => {
+    const me = req.user.id;
+    const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+    const roomIds = stmt('SELECT * FROM rooms').all().filter(room => canAccess(room, me)).map(room => room.id);
+    if (!roomIds.length) return res.json({ items: [], hasMore: false });
+    const inRooms = `m.room_id IN (${roomIds.map(() => '?').join(',')})`;
+    const alive = `m.seq>? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')}`;
+    const base = [clearedThroughSeq(), me, me, ...roomIds];
+    const mentions = stmt(`SELECT DISTINCT m.*, m.created_at AS at, m.sender_id AS actor FROM message_mentions x JOIN messages m ON m.id=x.message_id
+      WHERE x.user_id IN (?, '*') AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const replies = stmt(`SELECT m.*, m.created_at AS at, m.sender_id AS actor FROM message_replies r JOIN messages m ON m.id=r.message_id JOIN messages mine ON mine.id=r.reply_to
+      WHERE mine.sender_id=? AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const threads = stmt(`SELECT m.*, m.created_at AS at, m.sender_id AS actor FROM message_threads t JOIN messages m ON m.id=t.message_id JOIN messages root ON root.id=t.root_id
+      WHERE root.sender_id=? AND m.sender_id<>? AND ${alive} AND ${inRooms} AND m.created_at<? ORDER BY m.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const reactions = stmt(`SELECT m.*, x.created_at AS at, x.user_id AS actor, x.emoji FROM message_reactions x JOIN messages m ON m.id=x.message_id
+      WHERE m.sender_id=? AND x.user_id<>? AND ${alive} AND ${inRooms} AND x.created_at<? ORDER BY x.created_at DESC LIMIT 51`).all(me, me, ...base, before);
+    const tagged = [...mentions.map(row => ['mention', row]), ...replies.map(row => ['reply', row]), ...threads.map(row => ['thread', row]), ...reactions.map(row => ['reaction', row])];
+    // 同一条消息既 @ 了我又回复我时只留一条（回复优先）。
+    const seen = new Set();
+    const items = tagged.sort((a, b) => b[1].at - a[1].at || (a[0] === 'mention') - (b[0] === 'mention')).filter(([kind, row]) => {
+      const key = kind === 'reaction' ? `${row.id}:${row.actor}:${row.emoji}` : row.id;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    res.json({ items: items.slice(0, 50).map(([kind, row]) => ({ kind, at: row.at, actorId: row.actor, ...(row.emoji ? { emoji: row.emoji } : {}), message: serializeMessage(row) })), hasMore: items.length > 50 });
+  });
   // 按日期跳转：这个会话里某个时间之后的第一条消息（不含话题回复、已清空和自己删掉的）。
   app.get('/api/message-at', (req, res) => {
     const room = requireRoom(req.query.roomId, req.user.id);
