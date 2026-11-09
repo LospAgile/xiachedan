@@ -43,7 +43,7 @@ function PushSettings({ settings, notify }) {
     <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
 }
 
-export function SettingsDialog({ pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+export function SettingsDialog({ phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -81,6 +81,7 @@ export function SettingsDialog({ pushSettings, theme, onTheme, update, onUpdate,
         <button type="button" key={value} role="radio" aria-checked={chatPrefs.sendKey === value} className={chatPrefs.sendKey === value ? 'active' : ''} onClick={() => onChatPrefs({ sendKey: value })}>{label}</button>)}</div>
       <p className="inline-note">{chatPrefs.sendKey === 'enter' ? 'Shift + Enter 换行；在 ``` 代码块里回车也是换行。' : `Enter 换行，${modKey} + Enter 发送，适合经常写长消息。`}</p>
       </>}
+      {onPhrases && <PhraseSettings phrases={phrases} onChange={onPhrases} notify={notify} />}
     </>,
     notifications: <>
       {window.desktop?.getState && <DesktopSettings notify={notify} />}
@@ -219,6 +220,25 @@ function WallpaperPicker({ appearance, onAppearance, theme, notify }) {
 }
 
 // 关键词提醒：消息里出现这些词时像被 @ 一样提醒（免打扰的会话也会提醒），在所有设备上生效。
+// 常用语：在输入框的附件菜单或「/」菜单里一键插入；存在服务端，换设备也在。
+function PhraseSettings({ phrases, onChange, notify }) {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(next) {
+    setBusy(true);
+    try { await onChange(next); setInput(''); } catch (error) { notify(error.message); } finally { setBusy(false); }
+  }
+  const add = () => { const text = input.trim(); if (text && !phrases.includes(text)) save([...phrases, text]); else setInput(''); };
+  return <section className="phrase-settings"><h4>常用语</h4>
+    <p className="inline-note">在输入框点附件按钮选「常用语」，或输入「/」加关键字，就能插入。</p>
+    {phrases.length > 0 && <ul className="phrase-list">{phrases.map(text => <li key={text}><span>{text}</span>
+      <button type="button" className="icon-button" aria-label={`删除常用语 ${text.slice(0, 20)}`} disabled={busy} onClick={() => save(phrases.filter(item => item !== text))}><X size={13} /></button></li>)}</ul>}
+    {phrases.length < 30 && <div className="phrase-add"><textarea aria-label="添加常用语" placeholder="比如：收到，马上处理" rows={2} maxLength={500} value={input} disabled={busy}
+      onChange={event => setInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); add(); } }} />
+      <button type="button" className="secondary-button" disabled={busy || !input.trim()} onClick={add}>添加</button></div>}
+  </section>;
+}
+
 function KeywordSettings({ keywords, onChange, notify }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);

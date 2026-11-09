@@ -252,6 +252,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  const phrasesFor = id => JSON.parse(stmt('SELECT phrases FROM user_phrases WHERE user_id=?').get(id)?.phrases || '[]');
   // 「只对自己删除」：删掉的消息和清空过的会话，在这位成员的列表、未读、搜索、文件、导出里都不再出现。
   // 用法：在 WHERE 里拼上 visibleTo('m')，参数里补两个 userId。
   const visibleTo = (table = 'messages') => `${table}.id NOT IN (SELECT message_id FROM message_hidden WHERE user_id=?) AND ${table}.seq > COALESCE((SELECT through_seq FROM room_cleared c WHERE c.user_id=? AND c.room_id=${table}.room_id), 0)`;
@@ -320,7 +321,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), phrases: phrasesFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -854,6 +855,17 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     return { name, roomIds: [...new Set(req.body.roomIds)].filter(id => typeof id === 'string' && allowed.has(id)) };
   };
   const pushFolders = userId => deliver({ type: 'folders', folders: foldersFor(userId) }, socket => socket.userId === userId);
+  // 常用语：最多 30 条，每条 1–500 字，去重、保留顺序；推给自己的其他设备。
+  app.post('/api/phrases', (req, res) => {
+    rateLimit(req, 'phrases', 60);
+    if (!Array.isArray(req.body?.phrases) || req.body.phrases.some(item => typeof item !== 'string')) throw fail('常用语格式无效');
+    const phrases = [...new Set(req.body.phrases.map(item => item.trim()).filter(Boolean))];
+    if (phrases.length > 30) throw fail('最多保存 30 条常用语');
+    if (phrases.some(item => item.length > 500)) throw fail('每条常用语最多 500 个字');
+    stmt('INSERT INTO user_phrases VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET phrases=excluded.phrases').run(req.user.id, JSON.stringify(phrases));
+    deliver({ type: 'phrases', phrases }, socket => socket.userId === req.user.id);
+    res.json({ phrases });
+  });
   // 关键词提醒：最多 20 个，每个 1–20 个字，去重；推给自己的其他设备。
   app.post('/api/keywords', (req, res) => {
     rateLimit(req, 'keywords', 30);

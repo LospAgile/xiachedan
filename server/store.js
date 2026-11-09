@@ -98,6 +98,7 @@ export function openStore(directory) {
     CREATE TABLE IF NOT EXISTS user_stickers (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS user_stickers_user ON user_stickers(user_id, created_at);
     CREATE TABLE IF NOT EXISTS upload_stickers (upload_id TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS user_phrases (user_id TEXT PRIMARY KEY, phrases TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL, session_hash TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, muted TEXT NOT NULL DEFAULT '[]', private INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
     CREATE TABLE IF NOT EXISTS user_keywords (user_id TEXT PRIMARY KEY, keywords TEXT NOT NULL);

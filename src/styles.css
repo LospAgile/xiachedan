@@ -1209,6 +1209,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .folder-delete { margin-right: auto; }
 
 /* 关键词提醒 */
+.phrase-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; padding: 0; list-style: none; }
+.phrase-list li { display: flex; align-items: flex-start; gap: 6px; padding: 6px 6px 6px 10px; border-radius: 10px; background: var(--fill-1); font-size: 13px; }
+.phrase-list li span { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.phrase-list .icon-button { width: 24px; height: 24px; flex: none; }
+.phrase-add { display: flex; align-items: flex-end; gap: 6px; }
+.phrase-add textarea { flex: 1; min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--fill-1); font-size: 13px; resize: vertical; }
 .keyword-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding: 6px; border-radius: 10px; background: var(--fill-1); }
 .keyword-chip { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 10px; border-radius: 13px; background: var(--accent); color: #fff; font-size: 12px; }
 .keyword-chip button { display: inline-flex; padding: 3px; border-radius: 50%; color: inherit; }

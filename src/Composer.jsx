@@ -13,7 +13,7 @@ import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, placeholder }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, placeholder, phrases = [] }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -44,7 +44,9 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
   }
   // 行首或空格后输入「/」弹出格式菜单，「/」后的文字用来筛选（中文名、英文或拼音首字母）。
   const POLL = { id: 'poll', label: '投票', sample: '', keys: 'poll vote toupiao tp' };
-  const slashOptions = slash ? [...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : [])] : [];
+  // 常用语也能从「/」菜单里找：「/收到」会列出包含「收到」的常用语。
+  const phraseOptions = slash ? phrases.filter(text => !slash.query || text.includes(slash.query)).slice(0, 5).map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' '), sample: '常用语', phrase: text })) : [];
+  const slashOptions = slash ? [...(slash.query ? phraseOptions : []), ...matchFormats(slash.query), ...(onCreatePoll && !editing && (!slash.query || POLL.label.includes(slash.query) || POLL.keys.split(' ').some(key => key.startsWith(slash.query.toLowerCase()))) ? [POLL] : []), ...(slash.query ? [] : phraseOptions)] : [];
   // 表情短码：「:名字」弹出候选（至少两个字母；冒号前不能是字母或数字，避免把 12:30、http: 之类当成短码）。
   const [shortcode, setShortcode] = useState(null);
   const shortcodeOptions = shortcode ? matchShortcodes(shortcode.query) : [];
@@ -86,6 +88,7 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     const current = editing ? editText : draft.text, start = slash.start, end = start + 1 + slash.query.length;
     setSlash(null);
     if (item.id === 'poll') { setText(current.slice(0, start) + current.slice(end), [start, start]); onCreatePoll(); return; }
+    if (item.phrase) { setText(current.slice(0, start) + item.phrase + current.slice(end), [start + item.phrase.length, start + item.phrase.length]); return; }
     const result = applyFormat(current, start, end, item);
     setText(result.text, result.selection);
   }
@@ -266,10 +269,13 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     <div className="composer-row">
     {/* 附件统一收进回形针菜单：图片或视频、文件 */}
     <button type="button" className="round-button glass attach-button" aria-label="添加附件" title="添加附件（也可拖入或粘贴）" aria-haspopup="menu" aria-expanded={Boolean(attachMenu)} disabled={sending || !connected}
-      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (2 + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
+      onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setAttachMenu(attachMenu ? null : { x: rect.left, y: rect.top - 16 - (3 + matchMedia('(pointer: coarse)').matches + Boolean(onCreatePoll) + Boolean(onSchedule)) * 36, label: '添加附件', items: [
         { id: 'media', label: '图片或视频', action: () => input.current.click() },
         ...(matchMedia('(pointer: coarse)').matches ? [{ id: 'camera', label: '拍照', action: () => cameraInput.current.click() }] : []),
         { id: 'file', label: '文件（最大 100 MB）', action: () => fileInput.current.click() },
+        { id: 'phrases', label: '常用语…', action: () => setAttachMenu({ x: rect.left, y: rect.top - 16 - Math.max(1, phrases.length) * 36, label: '常用语', items: phrases.length
+          ? phrases.map((text, index) => ({ id: `phrase-${index}`, label: text.replace(/\s+/g, ' ').slice(0, 40), action: () => insertText(text) }))
+          : [{ id: 'none', label: '还没有常用语，在「设置 → 聊天」里添加', action: () => {} }] }) },
         ...(onCreatePoll ? [{ id: 'poll', label: '投票', action: onCreatePoll }] : []),
         ...(onSchedule ? [{ id: 'schedule', label: '定时发送…', action: () => onSchedule(draft.text) }] : []),
       ] }); }}><Paperclip size={19} strokeWidth={1.7} /></button>
