@@ -837,6 +837,13 @@ button.edited-mark { padding: 0; font: inherit; color: inherit; cursor: pointer;
 
 /* 投票 */
 /* 首选宽度、但不超过气泡：聊天区变窄时卡片跟着缩，不会伸出气泡 */
+.contact-card { display: flex; align-items: center; gap: 10px; width: 240px; max-width: 100%; margin: 2px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--fill-1); text-align: left; }
+.contact-card-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.contact-card b { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card small { color: var(--text-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-card-label { display: inline-flex; align-items: center; gap: 3px; align-self: flex-end; color: var(--text-2); font-size: 11px; }
+.mine .contact-card { background: rgba(255, 255, 255, .18); }
+.mine .contact-card small, .mine .contact-card-label { color: rgba(255, 255, 255, .8); }
 .poll-card { display: flex; flex-direction: column; gap: 6px; width: 320px; max-width: 100%; padding: 2px 0; }
 .poll-question { font-weight: 600; font-size: 14px; line-height: 20px; }
 .poll-kind { color: var(--text-2); font-size: 11px; }

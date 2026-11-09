@@ -107,7 +107,7 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
 // 转发：选一个目标会话，逐条发送。
 // 转发：一次最多选 9 个会话；附言跟在每个会话的转发内容之后。
 const FORWARD_LIMIT = 9;
-export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
+export function ForwardDialog({ count, rooms, icon, onClose, onForward, title, subtitle }) {
   const [search, setSearch] = useState('');
   const [targets, setTargets] = useState([]);
   const [merge, setMerge] = useState(false);
@@ -122,16 +122,17 @@ export function ForwardDialog({ count, rooms, icon, onClose, onForward }) {
     try { await onForward(targets, merge, comment.trim()); onClose(); } catch (failure) { setError(failure.message); } finally { setBusy(false); }
   }
   const full = targets.length >= FORWARD_LIMIT;
-  return <Modal title={`转发 ${count} 条消息`} subtitle={`${merge ? '合成一条「聊天记录」发过去，点开可以看到每条消息。' : '消息会逐条发送过去。'}最多选 ${FORWARD_LIMIT} 个会话。`} onClose={onClose}><form onSubmit={submit}>
+  const verb = title ? '发送' : '转发';
+  return <Modal title={title || `转发 ${count} 条消息`} subtitle={subtitle ? `${subtitle}最多选 ${FORWARD_LIMIT} 个会话。` : `${merge ? '合成一条「聊天记录」发过去，点开可以看到每条消息。' : '消息会逐条发送过去。'}最多选 ${FORWARD_LIMIT} 个会话。`} onClose={onClose}><form onSubmit={submit}>
     {count > 1 && <div className="segmented-control forward-mode" role="radiogroup" aria-label="转发方式">{[[false, '逐条转发'], [true, '合并转发']].map(([value, label]) => <button type="button" key={label} role="radio" aria-checked={merge === value} className={merge === value ? 'active' : ''} onClick={() => setMerge(value)}>{label}</button>)}</div>}
     <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
     <div className="member-picker" role="group" aria-label="转发到">{filtered.map(room => <label className={`member-option ${full && !chosen(room.id) ? 'disabled' : ''}`} key={room.id}>
       <input type="checkbox" checked={chosen(room.id)} disabled={full && !chosen(room.id)} onChange={() => toggle(room)} />{icon(room)}<span>{room.name}</span>
       <span className={`selection-check ${chosen(room.id) ? 'checked' : ''}`}>{chosen(room.id) && <Check size={13} />}</span></label>)}
       {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
-    {targets.length > 0 && <input className="forward-comment" aria-label="附言" placeholder="附言（可选），会在转发的消息之后发出" maxLength={2000} value={comment} onChange={event => setComment(event.target.value)} />}
+    {targets.length > 0 && <input className="forward-comment" aria-label="附言" placeholder={title ? '附言（可选），会在名片之后发出' : '附言（可选），会在转发的消息之后发出'} maxLength={2000} value={comment} onChange={event => setComment(event.target.value)} />}
     {error && <p className="form-error" role="alert">{error}</p>}
-    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !targets.length}>{busy ? '正在转发…' : targets.length === 1 ? `转发到「${targets[0].name}」` : targets.length ? `转发到 ${targets.length} 个会话` : '转发'}<ArrowRight size={16} /></button></div>
+    <div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !targets.length}>{busy ? `正在${verb}…` : targets.length === 1 ? `${verb}到「${targets[0].name}」` : targets.length ? `${verb}到 ${targets.length} 个会话` : verb}<ArrowRight size={16} /></button></div>
   </form></Modal>;
 }
 

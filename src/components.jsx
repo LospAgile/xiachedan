@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
+import { Contact, Cat, Bird, Rabbit, Fish, Coffee, Mountain, Orbit, Sprout, X, EyeOff, Download, ArrowUpRight, Film, Image as ImageIcon, Shuffle, Check, Reply, FileText, SmilePlus, Bot, MessagesSquare, LoaderCircle, CircleAlert, MessageCircle, PencilLine, Search, ChevronRight, Hand } from 'lucide-react';
 import { mediaUrl, formatTime, formatSize, randomName, seenText } from './api';
 import { previewText } from './history';
 import { FormattedText, LinkPreview, firstLink, plainText } from './markdown';
@@ -110,6 +110,15 @@ function BundleCard({ message, onOpen }) {
 }
 
 // 投票卡片：选中即投，多选可勾多个；结果对所有人公开，悬停能看到投票人。
+// 名片：头像、名字和部门，点开是这位成员的资料卡。
+function ContactCard({ userId, userOf, onOpen }) {
+  const user = userOf?.(userId);
+  return <button type="button" className="contact-card" disabled={!onOpen || !user} onClick={event => user && onOpen?.(user, event.currentTarget)}>
+    <Avatar user={user} size={40} /><span className="contact-card-copy"><b>{user?.name || '成员'}</b><small>{user?.removed ? '已离开空间' : user?.department || '个人名片'}</small></span>
+    <span className="contact-card-label"><Contact size={12} />名片</span>
+  </button>;
+}
+
 function PollCard({ message, viewerId, nameOf, onVote, onClosePoll }) {
   const { poll } = message;
   const mine = poll.options.map((option, index) => option.voters.includes(viewerId) ? index : -1).filter(index => index >= 0);
@@ -329,7 +338,7 @@ export const Message = React.memo(function Message({ message, user, mine, contin
       ? <button type="button" className="name-button" onClick={event => onOpenProfile(user, event.currentTarget)}>{user.name}</button> : user?.name || '成员'}{!mine && <StatusEmoji user={user} />}{message.bot && <small className="bot-tag">机器人</small>}</div>}
     {message.forwardedFrom && <div className="forward-label">转发自 {message.forwardedFrom.senderId === viewerId ? '我' : nameOf?.(message.forwardedFrom.senderId) || '成员'}</div>}
     {message.replyTo && <Quote color={message.replyTo.senderId ? colorOf?.(message.replyTo.senderId) : undefined} reply={message.replyTo} author={message.replyTo.senderId === viewerId ? '我' : nameOf?.(message.replyTo.senderId) || '成员'} onOpen={selecting ? undefined : () => onOpenQuote?.(message.replyTo, message)} />}
-    {message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
+    {message.card ? <ContactCard userId={message.card.userId} userOf={userOf} onOpen={selecting ? undefined : onOpenProfile} /> : message.bundle ? <><BundleCard message={message} onOpen={onOpenBundle} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</> : message.poll ? <><PollCard message={message} viewerId={viewerId} nameOf={nameOf} onVote={onVote} onClosePoll={mine ? onClosePoll : undefined} />{!reactionRow && <div className="bubble-meta-row">{meta}</div>}</>
       : message.text && <MessageText text={message.text} mentions={message.mentions} nameOf={nameOf} viewerId={viewerId} meta={reactionRow ? null : meta} />}
     {message.text && !message.poll && !message.bundle && firstLink(message.text) && <LinkPreview url={firstLink(message.text)} />}
     {album && <div className={`album album-${media.length}`}>{media.map(file => <Attachment key={file.id} file={file} privateMode={privateMode} onPreview={selecting ? () => {} : onPreview} />)}</div>}
@@ -435,7 +444,7 @@ function NudgeLine({ message, mine, user, viewerId, nameOf, fresh, onContextMenu
   return <article className="recalled-message nudge-message" data-message-id={message.id} data-seq={message.seq} onContextMenu={event => onContextMenu?.(event, message)}>{actor} 拍了拍 {targetName}</article>;
 }
 
-export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
+export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessage, onEdit, onClose, onNudge, onShare, onSetStatus, onSetDepartment, groupActions = [], groupNickname }) {
   const [department, setDepartment] = useState(null);
   const ref = useRef();
   const [editingNote, setEditingNote] = useState(false);
@@ -488,6 +497,7 @@ export function ProfileCard({ user, anchor, self, note = '', onSaveNote, onMessa
     {self ? <button type="button" className="secondary-button" onClick={onEdit}>编辑资料</button>
       : !user.removed && <button type="button" className="primary-button" onClick={onMessage}><MessageCircle size={15} />发送消息</button>}
     {onNudge && <button type="button" className="secondary-button" onClick={onNudge}><Hand size={15} />{self ? '拍拍自己' : '拍一拍'}</button>}
+    {onShare && !user.removed && <button type="button" className="secondary-button" onClick={onShare}><Contact size={15} />推荐给别人</button>}
     {groupActions.length > 0 && <div className="profile-group-actions">{groupActions.map(item => <button type="button" key={item.label} className={`text-button ${item.danger ? 'danger-text' : ''}`} onClick={item.action}>{item.label}</button>)}</div>}
   </div>;
 }

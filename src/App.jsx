@@ -57,6 +57,8 @@ export default function App() {
   // 只对自己删除：要删的消息标识；清空会话：目标会话。
   const [hiding, setHiding] = useState(null);
   const [clearing, setClearing] = useState(null);
+  // 推荐名片：要推荐的成员。
+  const [sharingCard, setSharingCard] = useState(null);
   // 当前会话的置顶消息；横条依次显示，点一下跳到那条消息并换到下一条。
   const [pins, setPins] = useState({ roomId: null, pins: [], canPin: false });
   const [pinIndex, setPinIndex] = useState(0);
@@ -458,7 +460,7 @@ export default function App() {
     const inThread = Boolean(message.threadOf);
     const quote = canReply && !inThread && !privateMode ? selectedQuote(message.id) : '';
     const canReact = canReply && Boolean(state.reactions?.length);
-    const canEdit = own && !message.poll && !message.nudge;
+    const canEdit = own && !message.poll && !message.nudge && !message.card;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
     const canPin = !inThread && pins.roomId === message.roomId && pins.canPin && !message.recalledAt && !message.nudge;
@@ -492,11 +494,11 @@ export default function App() {
       }
     };
     const images = !privateMode && !message.recalledAt ? message.attachments.filter(file => /^image\/(png|jpeg|webp|gif)$/.test(file.mime)) : [];
-    showContextMenu(event, { kind: 'message', canSticker: images.length > 0, canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canSticker: images.length > 0, canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply && !message.card, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply && !inThread ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
-      ...(canReply ? [{ id: 'forward', label: '转发', action: () => act('forward') }, ...(inThread ? [] : [{ id: 'select', label: '多选', action: () => act('select') }])] : []),
+      ...(canReply ? [...(message.card ? [] : [{ id: 'forward', label: '转发', action: () => act('forward') }]), ...(inThread ? [] : [{ id: 'select', label: '多选', action: () => act('select') }])] : []),
       ...(canCopy ? [{ id: 'copy', label: '复制', action: () => act('copy') }] : []),
       ...(!message.recalledAt ? [{ id: 'link', label: '复制消息链接', action: () => act('link') }] : []),
       ...(images.length ? [{ id: 'sticker', label: '添加到表情', action: () => act('sticker') }] : []),
@@ -847,7 +849,7 @@ export default function App() {
       groupNickname={nicknames[profileCard.userId]}
       groupActions={room?.kind === 'group' && profileCard.userId !== state.me.id && room.members.includes(profileCard.userId) ? groupActionsFor(userMap[profileCard.userId]) : []}
       onSetDepartment={(cloud ? isAdmin : isOwner) && profileCard.userId !== state.me.id ? async department => { try { await api('admin/department', { userId: profileCard.userId, department }); notify('部门已更新'); } catch (error) { notify(error.message); throw error; } } : undefined}
-      onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
+      onNudge={room && (room.kind === 'public' || room.members.includes(profileCard.userId)) && !state.me.muted ? () => { setProfileCard(null); nudge(userMap[profileCard.userId]); } : undefined} onShare={() => { setProfileCard(null); setSharingCard(userMap[profileCard.userId]); }} onEdit={() => { setProfileCard(null); setModal('profile'); }} />, document.querySelector('dialog[open]') || document.body)}
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
@@ -893,6 +895,20 @@ export default function App() {
     {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
+    {sharingCard && <ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
+      onForward={async (targets, _merge, comment) => {
+        const failed = [];
+        for (const target of targets) {
+          try {
+            const { message } = await api('contact-card', { roomId: target.id, userId: sharingCard.id });
+            if (target.id === selected) receive(message);
+            if (comment) { const extra = await api('messages', { roomId: target.id, text: comment, clientId: uid() }); if (target.id === selected) receive(extra.message); }
+          } catch (error) { failed.push(`「${target.name}」：${error.message}`); }
+        }
+        await refresh();
+        if (failed.length === targets.length) throw new Error(failed.join('；'));
+        notify(failed.length ? `已推荐到 ${targets.length - failed.length} 个会话；${failed.join('；')}` : '名片已发送');
+      }} />}
     {forwarding && <ForwardDialog count={forwarding.length} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setForwarding(null)} onForward={forwardTo} />}
     {editingFolder && <FolderDialog folder={editingFolder === 'new' ? null : editingFolder} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 28)}
       onSave={(name, roomIds) => saveFolder(editingFolder === 'new' ? null : editingFolder, name, roomIds)} onDelete={() => deleteFolder(editingFolder)} onClose={() => setEditingFolder(null)} />}
