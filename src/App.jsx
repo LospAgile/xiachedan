@@ -433,13 +433,16 @@ export default function App() {
   }
   function messageMenu(event, message) {
     const canCopy = Boolean(message.text) && !privateMode;
-    const canRecall = message.senderId === state.me.id && !message.recalledAt;
+    const own = message.senderId === state.me.id && !message.recalledAt;
+    // 管理者设了撤回时限时，超时的消息不再显示「撤回」；编辑不受影响。
+    const recallWindow = state.workspace.recallWindow || 0;
+    const canRecall = own && (!recallWindow || Date.now() - message.createdAt <= recallWindow * 1000);
     const canReply = !message.recalledAt && !message.nudge;
     // 话题里的回复不在主时间线上：不能在主输入框回复、多选或置顶。
     const inThread = Boolean(message.threadOf);
     const quote = canReply && !inThread && !privateMode ? selectedQuote(message.id) : '';
     const canReact = canReply && Boolean(state.reactions?.length);
-    const canEdit = canRecall && !message.poll && !message.nudge;
+    const canEdit = own && !message.poll && !message.nudge;
     const manager = state.workspace.mode === 'cloud' ? ['admin', 'super_admin'].includes(state.me.role) : state.workspace.ownerId === state.me.id;
     const canRemove = manager && message.senderId !== state.me.id && !message.recalledAt;
     const canPin = !inThread && pins.roomId === message.roomId && pins.canPin && !message.recalledAt && !message.nudge;

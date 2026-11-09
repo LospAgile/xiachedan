@@ -100,7 +100,8 @@ export function SettingsDialog({ pushSettings, theme, onTheme, update, onUpdate,
       {!cloud && <p className="inline-note">所有聊天都通过局域网连接，消息和附件保存在创建空间的电脑上。局域网传输使用 HTTP，请在可信网络内使用。</p>}
       {onAudit && <section><h4>管理</h4><button type="button" className="secondary-button" onClick={onAudit}>查看操作日志</button>
       <label className="toggle-row retention-row">消息保留期限<select aria-label="消息保留期限" value={workspace.retentionDays || 0} onChange={async event => { try { await api('admin/retention', { days: Number(event.target.value) }); await onChanged?.(); notify('保留期限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '永久保留'], [30, '30 天'], [90, '90 天'], [180, '180 天'], [365, '1 年']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}</section>}
+      {workspace.retentionDays > 0 && <p className="inline-note">超过 {workspace.retentionDays} 天的消息和附件会被自动删除，无法恢复。</p>}
+      <label className="toggle-row retention-row">消息撤回时限<select aria-label="消息撤回时限" value={workspace.recallWindow || 0} onChange={async event => { try { await api('admin/recall-window', { seconds: Number(event.target.value) }); await onChanged?.(); notify('撤回时限已更新'); } catch (error) { notify(error.message); } }}>{[[0, '不限'], [120, '2 分钟'], [86400, '24 小时']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></section>}
       {workspace.ownerId === me.id && <StorageSettings cloud={cloud} onCleared={onCleared} notify={notify} />}
       {window.desktop && !cloud && <><h4>加入另一个空间</h4><JoinSpaceForm identity={me} />
         <button type="button" className="text-button back-link" onClick={() => window.desktop.home().catch(error => notify(error.message))}>返回本机空间</button></>}

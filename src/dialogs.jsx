@@ -321,7 +321,7 @@ export function WebhooksDialog({ room, onClose, notify }) {
   </Modal>;
 }
 
-const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为' };
+const AUDIT_ACTIONS = { approve: '通过了注册', reject: '拒绝了注册', suspend: '停用了账号', role: '调整了角色', password: '修改了密码', 'reset-password': '重置了密码', 'delete-message': '删除了消息', mute: '禁言了', unmute: '解除了禁言', retention: '把消息保留期限改为', 'recall-window': '把撤回时限改为' };
 // 操作日志：谁在什么时候对谁做了哪项管理操作；被删消息只记会话，不保留内容。
 export function AuditDialog({ onClose }) {
   const [page, setPage] = useState(1);
@@ -333,7 +333,7 @@ export function AuditDialog({ onClose }) {
     {error && <p className="form-error" role="alert">{error}</p>}
     {!result ? <p className="inline-note">正在加载…</p> : !result.entries.length ? <p className="inline-note">还没有管理操作。</p> : <ul className="audit-list">{result.entries.map(entry => <li key={entry.id}>
       <time>{new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })}</time>
-      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{entry.action === 'retention' ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
+      <span><b>{entry.actor.name}</b> {AUDIT_ACTIONS[entry.action] || entry.action}{['retention', 'recall-window'].includes(entry.action) ? ` ${entry.detail}` : entry.action === 'password' ? '' : <> · <b>{entry.target.name}</b></>}{where(entry)}</span>
     </li>)}</ul>}
     {result?.total > 50 && <div className="account-pagination"><button className="secondary-button" disabled={page === 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>第 {page} 页 · 共 {result.total} 条</span><button className="secondary-button" disabled={page * 50 >= result.total} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
   </Modal>;

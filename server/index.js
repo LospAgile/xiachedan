@@ -246,6 +246,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT OR REPLACE INTO room_group_policy (room_id,all_muted,join_approval,invite_token,invite_at) VALUES (?,?,?,?,?)').run(roomId, next.all_muted, next.join_approval, next.invite_token, next.invite_at);
   };
   const retentionDays = () => Number(stmt("SELECT value FROM space_settings WHERE key='retention_days'").get()?.value || 0);
+  // 撤回时限（秒）：0 表示不限；由管理者设置，对所有人生效。
+  const RECALL_WINDOWS = [0, 120, 86400];
+  const recallWindow = () => Number(stmt("SELECT value FROM space_settings WHERE key='recall_window'").get()?.value || 0);
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
@@ -317,7 +320,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays(), recallWindow: recallWindow() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -532,6 +535,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!row) throw fail('消息不存在或已被清空', 404);
     requireRoom(row.room_id, req.user.id);
     if (row.sender_id !== req.user.id) throw fail('只能撤回自己发送的消息', 403);
+    const window = recallWindow();
+    if (window && Date.now() - row.created_at > window * 1000) throw fail(`超过 ${window >= 3600 ? `${window / 3600} 小时` : `${window / 60} 分钟`}的消息不能撤回`);
     recallMessage(row);
     res.json({ message: { ...serializeMessage(stmt('SELECT * FROM messages WHERE id=?').get(id)), readBy: [] } });
   });
@@ -627,6 +632,15 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, req.user.id, 'retention', days ? `${days} 天` : '永久', Date.now());
     broadcast({ type: 'rooms' });
     res.json({ retentionDays: days });
+  });
+  app.post('/api/admin/recall-window', (req, res) => {
+    requireManager(req);
+    const seconds = Number(req.body?.seconds);
+    if (!RECALL_WINDOWS.includes(seconds)) throw fail('撤回时限只能是 2 分钟、24 小时或不限');
+    stmt("INSERT OR REPLACE INTO space_settings VALUES ('recall_window', ?)").run(String(seconds));
+    stmt('INSERT INTO account_audit (actor_id,user_id,action,detail,created_at) VALUES (?,?,?,?,?)').run(req.user.id, req.user.id, 'recall-window', seconds === 120 ? '2 分钟' : seconds ? '24 小时' : '不限', Date.now());
+    broadcast({ type: 'rooms' });
+    res.json({ recallWindow: seconds });
   });
   // 操作日志：账号审核、角色、密码与删除消息等管理操作，最新的在前，每页 50 条。
   app.get('/api/admin/audit', (req, res) => {
