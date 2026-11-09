@@ -95,7 +95,7 @@ function remarkChat({ tokens, tail }) {
 // 代码块：带语言名和复制按钮；高亮库按需加载，没写语言时自动识别。
 let highlighter;
 const loadHighlighter = () => highlighter ||= import('highlight.js/lib/common').then(module => module.default);
-function CodeBlock({ language, text }) {
+export function CodeBlock({ language, text }) {
   const [highlighted, setHighlighted] = React.useState(null);
   const [copied, setCopied] = React.useState(false);
   React.useEffect(() => {

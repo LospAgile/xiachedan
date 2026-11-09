@@ -380,6 +380,14 @@ button.message-read-status.is-read { color: var(--text-1); }
 .attachment-caption small { font-size: 10px; font-variant-numeric: tabular-nums; }
 .attachment-caption a { display: inline-flex; color: inherit; padding: 2px; }
 .mine .attachment-caption { color: rgba(255, 255, 255, .8); }
+.file-card.previewable { padding-right: 4px; }
+.file-open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; }
+.file-open-hint { flex: none; padding: 2px 7px; border-radius: 8px; background: var(--fill-2); color: var(--accent-bright); font-size: 11px; font-weight: 600; }
+.mine .file-open-hint { background: rgba(255, 255, 255, .2); color: #fff; }
+.file-card.previewable > a { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border-radius: 8px; color: inherit; }
+.file-preview { max-height: min(70vh, 640px); overflow: auto; }
+.file-preview .code-block pre { max-height: none; }
+.file-preview-markdown { padding: 4px 2px; }
 .file-card { display: flex; align-items: center; gap: 10px; width: 300px; max-width: 100%; padding: 8px 10px 8px 8px; border-radius: 12px; background: var(--fill-1); color: inherit; text-decoration: none; }
 .file-card + .file-card, .attachment + .file-card, .file-card + .attachment { margin-top: 4px; }
 .file-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; width: 36px; height: 40px; border-radius: 8px; background: var(--fill-2); color: var(--text-2); }

@@ -16,6 +16,7 @@ import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
 import { syncPush } from './push';
 import { useAppLock, LockScreen, finishLockReset } from './AppLock';
+import { TextPreviewDialog, openPdf, previewKind } from './FilePreview';
 import { messageLink, groupInviteLink } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
@@ -60,6 +61,8 @@ export default function App() {
   const [clearing, setClearing] = useState(null);
   // 推荐名片：要推荐的成员。
   const [sharingCard, setSharingCard] = useState(null);
+  // 文件预览：文本和代码在弹窗里看，PDF 在新标签页打开。
+  const [filePreview, setFilePreview] = useState(null);
   // 当前会话的置顶消息；横条依次显示，点一下跳到那条消息并换到下一条。
   const [pins, setPins] = useState({ roomId: null, pins: [], canPin: false });
   const [pinIndex, setPinIndex] = useState(0);
@@ -133,6 +136,11 @@ export default function App() {
   const firstLoad = useRef(true);
   const longPress = useRef({ timer: 0, fired: false });
   const notify = useCallback(text => { setToast(text); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToast(''), 3500); }, []);
+  useEffect(() => {
+    const open = event => { const file = event.detail; if (previewKind(file) === 'pdf') openPdf(file, notify); else if (previewKind(file) === 'text') setFilePreview(file); };
+    window.addEventListener('linliao:open-file', open);
+    return () => window.removeEventListener('linliao:open-file', open);
+  }, [notify]);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
   useEffect(() => {
     const receiveNotice = event => notify(event.detail);
@@ -902,6 +910,7 @@ export default function App() {
     {groupAction?.type === 'leave' && room && <ConfirmDialog title={`退出「${room.name}」？`} subtitle={groupOwner === state.me.id ? '你是群主，退出后群主会自动转给最早加入的成员。退出后将看不到这个群的消息。' : '退出后将看不到这个群的消息，需要群里的人重新邀请才能回来。'} confirmLabel="退出群聊" busyLabel="正在退出…" danger
       onConfirm={async () => { await api('room-leave', { roomId: room.id }); setSelected('lobby'); setShowMembers(false); await refresh(); notify('已退出群聊'); }} onClose={() => setGroupAction(null)} />}
     {switcher && <QuickSwitcher rooms={ordered} icon={target => roomIcon(target, 24)} unread={unread} onOpen={id => { setSwitcher(false); openRoom(id); }} onClose={() => setSwitcher(false)} />}
+    {filePreview && <TextPreviewDialog file={filePreview} onClose={() => setFilePreview(null)} />}
     {sharingCard && <ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
       onForward={async (targets, _merge, comment) => {
         const failed = [];

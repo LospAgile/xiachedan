@@ -10,6 +10,7 @@ import { readStorage } from './history';
 import appIcon from './assets/brand/app-icon.svg';
 import { PRESETS, HEXTECH_AVATARS, HEXTECH_TIERS, getHextechAvatar } from '../shared/avatars.js';
 import { MediaAccessContext } from './mobile/MediaAccessContext';
+import { previewKind } from './FilePreview';
 
 export { PRESETS } from '../shared/avatars.js';
 const avatarIcons = { cat: Cat, bird: Bird, rabbit: Rabbit, fish: Fish, coffee: Coffee, mountain: Mountain, planet: Orbit, sprout: Sprout, bot: Bot };
@@ -93,10 +94,14 @@ export function PrivatePreview({ privateMode, children }) {
 // 普通文件：只显示名称和大小，点击下载，不在页面内打开。
 function FileCard({ file }) {
   const extension = file.name.includes('.') ? file.name.split('.').pop().slice(0, 4).toUpperCase() : '';
-  return <a className="file-card" href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`}>
-    <span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
-    <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span><Download size={15} />
-  </a>;
+  const body = <><span className="file-icon"><FileText size={20} strokeWidth={1.6} />{extension && <small>{extension}</small>}</span>
+    <span className="file-copy"><span>{file.name}</span><small>{formatSize(file.size)}</small></span></>;
+  // 文本、代码和 PDF 可以直接预览；点下载图标照常下载。
+  if (previewKind(file)) return <div className="file-card previewable">
+    <button type="button" className="file-open" title={`预览 ${file.name}`} onClick={() => window.dispatchEvent(new CustomEvent('linliao:open-file', { detail: file }))}>{body}<small className="file-open-hint">预览</small></button>
+    <a href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`} aria-label={`下载 ${file.name}`}><Download size={15} /></a>
+  </div>;
+  return <a className="file-card" href={mediaUrl(file.id, true)} download={file.name} title={`下载 ${file.name}`}>{body}<Download size={15} /></a>;
 }
 
 // 合并转发的聊天记录卡片：显示前三条，点开看全部。
