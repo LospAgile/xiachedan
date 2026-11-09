@@ -10,6 +10,7 @@ import { ACCENTS, FONT_SIZES, WALLPAPERS, wallpaperCss, readWallpaperImage, save
 import { readQuiet, saveQuiet, isQuiet } from './quiet';
 import { modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
+import { disablePush, enablePush, needsHomeScreen, pushState, pushSupported } from './push';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
@@ -24,7 +25,25 @@ function SettingRow({ title, description, children }) {
   return <div className="setting-row"><span><b>{title}</b>{description && <small>{description}</small>}</span>{children}</div>;
 }
 
-export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+// 手机推送：只在能用的环境里显示；iPhone 上提示先添加到主屏幕。
+function PushSettings({ settings, notify }) {
+  const [enabled, setEnabled] = useState(() => pushSupported() && Boolean(pushState()) && Notification.permission === 'granted');
+  const [busy, setBusy] = useState(false);
+  if (needsHomeScreen()) return <SettingRow title="手机推送" description="在 Safari 里点「分享 → 添加到主屏幕」，从主屏幕打开虾扯蛋后就能开启。" />;
+  if (!pushSupported()) return null;
+  const change = async value => {
+    setBusy(true);
+    try {
+      if (value) { await enablePush(settings); notify('已开启手机推送'); } else { await disablePush(); notify('已关闭手机推送'); }
+      setEnabled(value);
+      window.dispatchEvent(new Event('linliao:resume'));
+    } catch (error) { notify(error.message); } finally { setBusy(false); }
+  };
+  return <SettingRow title="手机推送" description={Notification.permission === 'denied' ? '通知权限被拒绝，请在系统设置里允许虾扯蛋发送通知。' : '虾扯蛋在后台或没有打开时，也会收到新消息通知。免打扰的会话只在被 @ 时推送。'}>
+    <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
+}
+
+export function SettingsDialog({ pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -65,6 +84,7 @@ export function SettingsDialog({ theme, onTheme, update, onUpdate, connected, me
     </>,
     notifications: <>
       {window.desktop?.getState && <DesktopSettings notify={notify} />}
+      {pushSettings && <PushSettings settings={pushSettings} notify={notify} />}
       {chatPrefs && <SettingRow title="新消息提示音" description="正在看的会话、免打扰会话和勿扰时段内不响。">
         <button type="button" className="text-button" onClick={() => playMessageSound({ force: true })}>试听</button>
         <Switch label="新消息提示音" checked={chatPrefs.sound} onChange={value => onChatPrefs({ sound: value })} /></SettingRow>}

@@ -93,6 +93,8 @@ export function openStore(directory) {
     -- 按会话自动删除：消息发出超过 seconds 秒后为所有人删除（阅后即焚，Telegram 式定时）。
     CREATE TABLE IF NOT EXISTS room_auto_delete (room_id TEXT PRIMARY KEY, seconds INTEGER NOT NULL, set_by TEXT NOT NULL, set_at INTEGER NOT NULL);
     -- 关键词提醒：消息里出现这些词时像被 @ 一样提醒，跨设备同步。
+    CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint TEXT PRIMARY KEY, id TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL, session_hash TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, muted TEXT NOT NULL DEFAULT '[]', private INTEGER NOT NULL DEFAULT 0, origin TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
     CREATE TABLE IF NOT EXISTS user_keywords (user_id TEXT PRIMARY KEY, keywords TEXT NOT NULL);
     -- 会话文件夹：每人自建，存会话标识列表，跨设备同步。
     CREATE TABLE IF NOT EXISTS user_folders (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, room_ids TEXT NOT NULL, created_at INTEGER NOT NULL);

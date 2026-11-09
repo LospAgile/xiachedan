@@ -11,6 +11,8 @@ import { openStore, serializeMessage as baseMessage } from './store.js';
 import { lanAddresses } from './network.js';
 import { createAuth } from './auth.js';
 import { fetchPreview } from './linkPreview.js';
+import { createVapidKeys, sendPush, validEndpoint, validKeys, vapidPublicKey } from './webpush.js';
+import { plainText, previewText } from '../shared/preview.js';
 import { isPresetAvatar } from '../shared/avatars.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,6 +48,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   previewFetcher = fetchPreview,
   scheduleInterval = 15000,
   scheduleMinLead = 30000,
+  pushSender = sendPush,
 } = {}) {
   if (!['cloud', 'local'].includes(mode)) throw new Error('CHAT_MODE 必须是 cloud 或 local');
   const cloud = mode === 'cloud';
@@ -246,6 +249,44 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  // 手机推送（PWA）：订阅属于某台设备的某次登录，退出或被下线后不再推送；免打扰和隐私模式按这台设备的设置。
+  const pushSessionOf = req => cloud ? auth.tokenHash(req) : hash(tokenFrom(req));
+  const pushSessionAlive = row => cloud
+    ? Boolean(stmt('SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?').get(row.session_hash, row.user_id, Date.now())) && auth.activeId(row.user_id)
+    : Boolean(stmt('SELECT 1 FROM users WHERE id=? AND token_hash=?').get(row.user_id, row.session_hash));
+  const vapidKey = () => {
+    if (!stmt("SELECT 1 FROM space_settings WHERE key='vapid_jwk'").get()) stmt("INSERT OR IGNORE INTO space_settings VALUES ('vapid_jwk', ?)").run(JSON.stringify(createVapidKeys()));
+    return JSON.parse(stmt("SELECT value FROM space_settings WHERE key='vapid_jwk'").get().value);
+  };
+  const pushContact = row => process.env.CHAT_PUSH_CONTACT || (row.origin.startsWith('https://') ? row.origin : 'https://github.com/ayogggua/xiachedan');
+  // 这台设备正开着页面并且在前台时，由页面自己处理，不再推送。
+  const pushWatching = row => [...sockets].some(socket => socket.pushId === row.id && socket.visible && socket.readyState === WebSocket.OPEN);
+  const pushTo = (row, payload, urgency) => {
+    if (!pushSessionAlive(row)) { stmt('DELETE FROM push_subscriptions WHERE endpoint=?').run(row.endpoint); return; }
+    const notice = row.private ? { ...payload, title: '虾扯蛋', body: '你有一条新消息' } : payload;
+    pushSender({ endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } }, notice, { jwk: vapidKey(), subject: pushContact(row), urgency })
+      .then(status => { if (status === 404 || status === 410) stmt('DELETE FROM push_subscriptions WHERE endpoint=?').run(row.endpoint); })
+      .catch(() => {});
+  };
+  const pushedReminders = new Set();
+  const pushMessage = (message, room) => {
+    if (message.recalledAt) return;
+    const rows = stmt('SELECT * FROM push_subscriptions WHERE user_id<>?').all(message.senderId || '');
+    if (!rows.length) return;
+    const sender = message.bot || (message.senderId && stmt('SELECT name FROM users WHERE id=?').get(message.senderId)?.name) || '新消息';
+    const nickname = message.senderId && room.kind === 'group' && stmt('SELECT nickname FROM room_nicknames WHERE room_id=? AND user_id=?').get(room.id, message.senderId)?.nickname;
+    const text = plainText(message.text || '').toLowerCase();
+    for (const row of rows) {
+      if (!canAccess(room, row.user_id) || (message.nudge && message.nudge.targetId !== row.user_id) || pushWatching(row)) continue;
+      const mentioned = message.mentions?.some(id => id === row.user_id || id === '*');
+      const keyword = Boolean(text) && keywordsFor(row.user_id).some(word => text.includes(word.toLowerCase()));
+      if (JSON.parse(row.muted).includes(room.id) && !mentioned && !keyword) continue;
+      const title = `${mentioned ? '[有人@你] ' : keyword ? '[关键词] ' : ''}${nickname || sender}${room.kind === 'direct' ? '' : ` · ${room.name}`}`;
+      const body = message.nudge ? '拍了拍你' : previewText(message);
+      pushTo(row, { title: title.slice(0, 120), body: body.slice(0, 200), roomId: room.id, messageId: message.id, threadOf: message.threadOf || null },
+        mentioned || keyword || room.kind === 'direct' ? 'high' : 'normal');
+    }
+  };
   const statusOf = id => {
     const row = stmt('SELECT emoji, text, until FROM user_status WHERE user_id=?').get(id);
     return row && (!row.until || row.until > Date.now()) ? { emoji: row.emoji, text: row.text, until: row.until } : null;
@@ -281,6 +322,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const broadcast = (event, roomId) => {
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
     deliver(event, socket => !roomId || canAccess(room, socket.userId));
+    if (event.type === 'message' && room) pushMessage(event.message, room);
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -800,6 +842,29 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
     res.json({ keywords });
   });
+  app.get('/api/push', (_req, res) => res.json({ publicKey: vapidPublicKey(vapidKey()) }));
+  // 订阅和更新这台设备的推送设置共用一个接口：muted 是这台设备上设了免打扰的会话，private 是隐私模式。
+  app.post('/api/push/subscribe', (req, res) => {
+    rateLimit(req, 'push', 30);
+    const { endpoint, keys } = req.body?.subscription || {};
+    if (!validEndpoint(endpoint) || !validKeys(keys)) throw fail('推送订阅无效');
+    const muted = req.body.muted ?? [];
+    if (!Array.isArray(muted) || muted.length > 1000 || muted.some(id => typeof id !== 'string' || id.length > 100)) throw fail('免打扰列表无效');
+    const origin = /^https:\/\/[^/]+$/.test(req.get('origin') || '') ? req.get('origin') : '';
+    const id = stmt('SELECT id FROM push_subscriptions WHERE endpoint=?').get(endpoint)?.id || randomUUID(), now = Date.now();
+    stmt(`INSERT INTO push_subscriptions (endpoint,id,user_id,session_hash,p256dh,auth,muted,private,origin,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, session_hash=excluded.session_hash, p256dh=excluded.p256dh, auth=excluded.auth,
+      muted=excluded.muted, private=excluded.private, origin=excluded.origin, updated_at=excluded.updated_at`)
+      .run(endpoint, id, req.user.id, pushSessionOf(req), keys.p256dh, keys.auth, JSON.stringify([...new Set(muted)]), req.body.private ? 1 : 0, origin, now, now);
+    // 每人最多保留 10 台设备的订阅。
+    stmt('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint NOT IN (SELECT endpoint FROM push_subscriptions WHERE user_id=? ORDER BY updated_at DESC LIMIT 10)').run(req.user.id, req.user.id);
+    res.json({ id });
+  });
+  app.post('/api/push/unsubscribe', (req, res) => {
+    if (typeof req.body?.endpoint !== 'string') throw fail('推送订阅无效');
+    stmt('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(req.body.endpoint, req.user.id);
+    res.json({ ok: true });
+  });
   app.post('/api/folders', (req, res) => {
     rateLimit(req, 'folders', 30);
     const { name, roomIds } = folderInput(req);
@@ -1211,7 +1276,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       const message = stmt('SELECT * FROM messages WHERE id=?').get(row.message_id);
       const room = message && stmt('SELECT * FROM rooms WHERE id=?').get(message.room_id);
       if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); continue; }
-      if (!online.has(row.user_id)) continue;
+      // 不在线时先推送到手机（每条提醒只推一次），等上线后再在页面里提醒。
+      if (!online.has(row.user_id)) {
+        if (!pushedReminders.has(row.id)) {
+          pushedReminders.add(row.id);
+          const body = previewText(serializeMessage(message)).slice(0, 200);
+          for (const sub of stmt('SELECT * FROM push_subscriptions WHERE user_id=?').all(row.user_id)) pushTo(sub, { title: '提醒', body, roomId: room.id, messageId: message.id }, 'high');
+        }
+        continue;
+      }
+      pushedReminders.delete(row.id);
       deliver({ type: 'reminder', message: serializeMessage(message) }, socket => socket.userId === row.user_id);
       stmt('DELETE FROM reminders WHERE id=?').run(row.id);
     }
@@ -1644,6 +1718,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       ws.on('message', data => {
         let event;
         try { event = JSON.parse(data); } catch { return; }
+        // 页面告诉服务端：这个连接对应哪台设备的推送订阅、页面是否在前台。
+        if (event?.type === 'presence') {
+          ws.pushId = typeof event.pushId === 'string' && stmt('SELECT 1 FROM push_subscriptions WHERE id=? AND user_id=?').get(event.pushId, ws.userId) ? event.pushId : '';
+          ws.visible = event.visible === true;
+          return;
+        }
         if (event?.type !== 'typing' || typeof event.roomId !== 'string' || event.roomId.length > 100) return;
         if (Date.now() - (ws.typedAt || 0) < 2000) return;
         const room = stmt('SELECT * FROM rooms WHERE id=?').get(event.roomId);

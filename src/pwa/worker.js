@@ -29,3 +29,29 @@ self.addEventListener('fetch', event => {
     event.respondWith(caches.open(CACHE_NAME).then(async cache => await cache.match(request) || fetch(request)));
   }
 });
+
+// 手机推送：每条推送都必须显示通知（Safari 的要求）；同一会话的通知用 tag 合并成一条。
+self.addEventListener('push', event => {
+  let data = {};
+  try { data = event.data?.json() || {}; } catch {}
+  event.waitUntil(self.registration.showNotification(data.title || '虾扯蛋', {
+    body: data.body || '你有一条新消息', tag: data.roomId || 'xiachedan', renotify: true, icon: '/icons/app-192.png',
+    data: { roomId: data.roomId || '', messageId: data.threadOf || data.messageId || '' },
+  }));
+});
+
+// 点通知：已经开着页面就切过去并跳到那条消息，否则打开新页面。
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const { roomId, messageId } = event.notification.data || {};
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const current = windows.find(item => new URL(item.url).origin === self.location.origin);
+    if (current) {
+      await current.focus();
+      if (roomId && messageId) current.postMessage({ type: 'open-message', roomId, id: messageId });
+      return;
+    }
+    await self.clients.openWindow(roomId && messageId ? `/#msg=${encodeURIComponent(roomId)}/${encodeURIComponent(messageId)}` : '/');
+  })());
+});

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
 import { socketProtocols } from './mobile/session';
+import { disablePush, pushId } from './push';
 import { chatPref } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
@@ -119,6 +120,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     logoutPending.current = true;
     setLoggingOut(true);
     try {
+      // 先取消这台设备的手机推送，退出后不再收到这个账号的通知。
+      await disablePush().catch(() => {});
       await api(bootstrap?.mode === 'cloud' ? 'auth/logout' : 'logout', {});
     } catch (error) {
       logoutPending.current = false;
@@ -208,7 +211,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       clearTimeout(reconnect.current);
       const currentSocket = new WebSocket(socketUrl(), socketProtocols());
       socket = socketRef.current = currentSocket;
-      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; synchronize(); };
+      socket.onopen = () => { if (cancelled || logoutPending.current || socket !== currentSocket) return currentSocket.close(); setConnected(true); delay = 700; presence(); synchronize(); };
       socket.onmessage = event => {
         if (cancelled || logoutPending.current || socket !== currentSocket) return;
         let data; try { data = JSON.parse(event.data); } catch { return; }
@@ -248,7 +251,10 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
       socket.onerror = () => currentSocket.close();
     }
     connect();
+    // 告诉服务端这台设备的页面是否在前台：在前台时不发手机推送。
+    const presence = () => { if (pushId() && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'presence', pushId: pushId(), visible: document.visibilityState === 'visible' })); };
     const resume = () => {
+      presence();
       if (document.visibilityState === 'hidden' || cancelled || logoutPending.current) return;
       if (socket?.readyState === WebSocket.OPEN) synchronize();
       else if (socket?.readyState !== WebSocket.CONNECTING) { clearTimeout(reconnect.current); connect(); }

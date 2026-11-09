@@ -14,6 +14,7 @@ import useConversations from './useConversations';
 import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
+import { syncPush } from './push';
 import { messageLink, groupInviteLink } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
@@ -146,6 +147,9 @@ export default function App() {
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
   const outbox = useOutbox({ storageKey: conversationScope && `linliao.outbox:${conversationScope}`, connected: connected && !loggingOut, onSent: receive });
   mutedRooms.current = new Set(conversations.filter(room => room.muted).map(room => room.id));
+  // 手机推送按这台设备的免打扰和隐私模式过滤：变化后同步给服务端。
+  const mutedKey = [...mutedRooms.current].sort().join(',');
+  useEffect(() => { if (state?.me?.id) syncPush({ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }).catch(() => {}); }, [state?.me?.id, mutedKey, privateMode]);
   const messageContext = useRef();
   messageContext.current = { scope: conversationScope, messages, privateMode };
   useEffect(() => {
@@ -481,11 +485,14 @@ export default function App() {
     };
     const open = event => latest.current?.openMessageLink(event.detail);
     const join = event => latest.current?.joinGroup(event.detail);
+    // 点手机推送通知时，Service Worker 让已打开的页面跳到那条消息。
+    const fromWorker = event => { if (event.data?.type === 'open-message') latest.current?.openMessageLink({ roomId: event.data.roomId, id: event.data.id }); };
+    navigator.serviceWorker?.addEventListener('message', fromWorker);
     fromAddress();
     window.addEventListener('hashchange', fromAddress);
     window.addEventListener('linliao:open-message', open);
     window.addEventListener('linliao:join-group', join);
-    return () => { window.removeEventListener('hashchange', fromAddress); window.removeEventListener('linliao:open-message', open); window.removeEventListener('linliao:join-group', join); };
+    return () => { window.removeEventListener('hashchange', fromAddress); window.removeEventListener('linliao:open-message', open); window.removeEventListener('linliao:join-group', join); navigator.serviceWorker?.removeEventListener('message', fromWorker); };
   }, [state?.me?.id]);
   const recipientsCache = useRef([]);
   const messageHandlers = useMemo(() => ({
@@ -773,7 +780,7 @@ export default function App() {
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <SettingsDialog onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <SettingsDialog pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
       <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索名字、部门或签名" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
       <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
