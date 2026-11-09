@@ -13,7 +13,7 @@ import ImageEditor from './ImageEditor';
 
 const empty = { text: '', files: [], mentions: [] };
 const EVERYONE = { id: '*', name: '所有人' };
-export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, placeholder, phrases = [] }) {
+export default function Composer({ room, connected, onQueue, notify, reply, replyAuthor, onCancelReply, privateMode, members = [], canMentionAll = false, onTyping, editing, onCancelEdit, onEdited, onEditLast, onCreatePoll, onSchedule, notice, sendKey = 'enter', onDraft, injectDraft, injectShare, placeholder, phrases = [] }) {
   const typedAt = useRef(0);
   const [attachMenu, setAttachMenu] = useState(null);
   const [picker, setPicker] = useState(null);
@@ -234,6 +234,14 @@ export default function Composer({ room, connected, onQueue, notify, reply, repl
     if (injectDraft.roomId === room.id) pendingSelection.current = [next.length, next.length];
     update(injectDraft.roomId, state => ({ ...state, text: next }));
   }, [injectDraft?.nonce]);
+  // 系统分享菜单发来的文字和文件：切到选中的会话后放进输入框，由用户确认后发送。
+  const sharedNonce = useRef(null);
+  useEffect(() => {
+    if (!injectShare || injectShare.roomId !== room.id || sharedNonce.current === injectShare.nonce) return;
+    sharedNonce.current = injectShare.nonce;
+    if (injectShare.text) update(room.id, state => ({ ...state, text: state.text ? `${state.text}\n${injectShare.text}` : injectShare.text }));
+    if (injectShare.files.length) addFiles(injectShare.files);
+  }, [injectShare?.nonce, room.id]);
   // 离开会话时把剩下的草稿交给侧栏，显示「[草稿]」。
   const onDraftRef = useRef(onDraft);
   onDraftRef.current = onDraft;

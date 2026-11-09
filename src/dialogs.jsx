@@ -114,6 +114,18 @@ export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
 }
 
 // 转发：选一个目标会话，逐条发送。
+// 系统分享菜单发来的内容：选一个会话，内容放进那里的输入框，确认后再发送。
+export function ShareTargetDialog({ share, rooms, icon, onClose, onPick }) {
+  const [search, setSearch] = useState('');
+  const filtered = rooms.filter(room => room.name.toLowerCase().includes(search.toLowerCase()));
+  const summary = [share.files.length ? `${share.files.length} 个文件` : '', share.text ? `「${share.text.replace(/\s+/g, ' ').slice(0, 30)}${share.text.length > 30 ? '…' : ''}」` : ''].filter(Boolean).join('和');
+  return <Modal title="发送到…" subtitle={`选择一个会话，${summary}会放进输入框，确认后再发送。`} onClose={onClose}>
+    <div className="search-input"><Search size={16} /><input autoFocus placeholder="搜索会话" aria-label="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="member-picker" role="list" aria-label="发送到">{filtered.map(room => <button type="button" className="member-option" key={room.id} onClick={() => onPick(room)}>{icon(room)}<span>{room.name}</span><ArrowRight size={15} /></button>)}
+      {!filtered.length && <div className="compact-empty"><Search size={25} /><p>没有找到这个会话</p></div>}</div>
+  </Modal>;
+}
+
 // 转发：一次最多选 9 个会话；附言跟在每个会话的转发内容之后。
 const FORWARD_LIMIT = 9;
 export function ForwardDialog({ count, rooms, icon, onClose, onForward, title, subtitle }) {

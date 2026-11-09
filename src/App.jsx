@@ -7,7 +7,7 @@ import { Avatar, IconButton, Logo, Message, Modal, PrivatePreview, ContextMenu, 
 import Onboarding from './Onboarding';
 import Account, { AdminDialog, PasswordForm } from './Account';
 import Composer from './Composer';
-import { ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, FolderDialog, StatusDialog, BundleDialog } from './dialogs';
+import { ShareTargetDialog, ProfileDialog, RoomAvatarDialog, InviteDialog, GroupDialog, RemoveMemberDialog, RecallDialog, EditHistoryDialog, ForwardDialog, ConfirmDialog, GroupEditDialog, WebhooksDialog, AuditDialog, PollDialog, ScheduleDialog, ScheduledListDialog, ReminderDialog, MuteDialog, ShortcutsDialog, FolderDialog, StatusDialog, BundleDialog } from './dialogs';
 import useUnread from './useUnread';
 import useChatSession from './useChatSession';
 import useConversations from './useConversations';
@@ -17,6 +17,7 @@ import { SettingsDialog } from './Settings';
 import { syncPush } from './push';
 import { useAppLock, LockScreen, finishLockReset } from './AppLock';
 import { TextPreviewDialog, openPdf, previewKind } from './FilePreview';
+import { pendingShareId, takeShare } from './shareTarget';
 import { messageLink, groupInviteLink, plainText } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
@@ -63,6 +64,9 @@ export default function App() {
   const [sharingCard, setSharingCard] = useState(null);
   // 触屏上长按会弹出菜单、没法选字：在弹窗里选要引用的那一段。
   const [quoting, setQuoting] = useState(null);
+  // 系统分享菜单发来的内容：先选会话，再放进那个会话的输入框。
+  const [incomingShare, setIncomingShare] = useState(null);
+  const [injectShare, setInjectShare] = useState(null);
   const quoteArea = useRef(null);
   // 文件预览：文本和代码在弹窗里看，PDF 在新标签页打开。
   const [filePreview, setFilePreview] = useState(null);
@@ -186,6 +190,12 @@ export default function App() {
   // 手机推送按这台设备的免打扰和隐私模式过滤：变化后同步给服务端。
   const mutedKey = [...mutedRooms.current].sort().join(',');
   useEffect(() => { if (bootstrap) finishLockReset(Boolean(state?.me), appLock); }, [bootstrap, state?.me?.id]);
+  useEffect(() => {
+    const id = state?.me?.id && pendingShareId();
+    if (!id) return;
+    history.replaceState(null, '', location.pathname + location.hash);
+    takeShare(id).then(share => { if (share && (share.text || share.files.length)) setIncomingShare(share); else if (share) notify('没有可以发送的内容'); }).catch(() => notify('读取分享的内容失败'));
+  }, [state?.me?.id]);
   useEffect(() => { if (state?.me?.id) syncPush({ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }).catch(() => {}); }, [state?.me?.id, mutedKey, privateMode]);
   const messageContext = useRef();
   messageContext.current = { scope: conversationScope, messages, privateMode };
@@ -792,7 +802,7 @@ export default function App() {
         <button className="secondary-button" onClick={() => setSelection(null)}>取消</button>
         <button className="secondary-button" disabled={!selection.length} onClick={() => setHiding([...selection])}>删除</button>
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
-      </div> : room.kind === 'group' && room.allMuted && !isGroupManager ? <div className="muted-notice glass" role="status">全员禁言中，只有群主和管理员可以发言</div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer injectDraft={injectDraft} sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
+      </div> : room.kind === 'group' && room.allMuted && !isGroupManager ? <div className="muted-notice glass" role="status">全员禁言中，只有群主和管理员可以发言</div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer injectDraft={injectDraft} injectShare={injectShare} sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))} phrases={state.phrases}
         notice={scheduled.roomId === room.id && scheduled.items.length > 0 && <button type="button" className="scheduled-bar glass" onClick={() => setModal('scheduled')}><Clock size={14} />{scheduled.items.length} 条定时消息待发送 · 最近 {new Date(scheduled.items[0].sendAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</button>}
         onCreatePoll={() => setModal('poll')} onSchedule={text => setScheduleText(text)} onTyping={sendTyping} editing={editTarget} onCancelEdit={() => setEditing(null)} onEdited={message => { applyEdit(message); setEditing(null); }}
@@ -920,6 +930,8 @@ export default function App() {
       <div className="modal-footer"><button type="button" className="secondary-button" onClick={() => setQuoting(null)}>取消</button>
         <button type="button" className="primary-button" onClick={() => { const node = quoteArea.current, part = node.value.slice(node.selectionStart, node.selectionEnd).trim(); setEditing(null); setReplying({ roomId: quoting.roomId, id: quoting.id, quote: part.slice(0, 500) }); setQuoting(null); }}>引用</button></div>
     </Modal>}
+    {incomingShare && <ShareTargetDialog share={incomingShare} rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setIncomingShare(null)}
+      onPick={target => { const share = incomingShare; setIncomingShare(null); openRoom(target.id); setMobileChat(true); setInjectShare({ roomId: target.id, text: share.text, files: share.files, nonce: Date.now() }); }} />}
     {filePreview && <TextPreviewDialog file={filePreview} onClose={() => setFilePreview(null)} />}
     {sharingCard && <ForwardDialog count={1} title={`推荐「${displayUser(sharingCard)?.name || sharingCard.name}」的名片`} subtitle="对方点开名片就能看到资料卡、发起私聊。" rooms={rooms.filter(target => !target.hidden)} icon={target => roomIcon(target, 32)} onClose={() => setSharingCard(null)}
       onForward={async (targets, _merge, comment) => {

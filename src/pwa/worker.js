@@ -55,3 +55,23 @@ self.addEventListener('notificationclick', event => {
     await self.clients.openWindow(roomId && messageId ? `/#msg=${encodeURIComponent(roomId)}/${encodeURIComponent(messageId)}` : '/');
   })());
 });
+
+// 系统分享菜单发来的文字和文件：先存进缓存，再打开 App 让用户选会话（最多 6 个文件）。
+const SHARE_CACHE = 'xiachedan-share';
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'POST' || url.origin !== self.location.origin || url.pathname !== '/share-target') return;
+  event.respondWith((async () => {
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      const form = await event.request.formData();
+      const cache = await caches.open(SHARE_CACHE);
+      const files = form.getAll('files').filter(file => typeof file === 'object' && file.size > 0).slice(0, 6);
+      const meta = { title: String(form.get('title') || ''), text: String(form.get('text') || ''), url: String(form.get('url') || ''),
+        files: files.map((file, index) => ({ name: file.name || `文件${index + 1}`, type: file.type || 'application/octet-stream', key: `/__share/${id}/${index}` })) };
+      await Promise.all(files.map((file, index) => cache.put(meta.files[index].key, new Response(file, { headers: { 'Content-Type': meta.files[index].type } }))));
+      await cache.put(`/__share/${id}/meta`, new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+    } catch {}
+    return Response.redirect(`/?share=${id}`, 303);
+  })());
+});
