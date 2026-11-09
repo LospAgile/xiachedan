@@ -1219,6 +1219,16 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
     res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
   });
+  // 按日期跳转：这个会话里某个时间之后的第一条消息（不含话题回复、已清空和自己删掉的）。
+  app.get('/api/message-at', (req, res) => {
+    const room = requireRoom(req.query.roomId, req.user.id);
+    const time = Number(req.query.time);
+    if (!Number.isSafeInteger(time) || time < 0) throw fail('日期无效');
+    const row = stmt(`SELECT id, room_id, seq, created_at FROM messages WHERE room_id=? AND created_at>=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq LIMIT 1`)
+      .get(room.id, time, clearedThroughSeq(), req.user.id, req.user.id);
+    if (!row) throw fail('这一天以后没有消息', 404);
+    res.json({ id: row.id, roomId: row.room_id, seq: row.seq, createdAt: row.created_at });
+  });
   // 话题：根消息和它的全部回复（最多 500 条，按时间先后）。
   app.get('/api/thread', (req, res) => {
     const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);
