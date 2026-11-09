@@ -25,7 +25,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   const [pinsVersion, setPinsVersion] = useState(0);
   const [savedVersion, setSavedVersion] = useState(0);
   const [threadTick, setThreadTick] = useState({ rootId: null, n: 0 });
-  const historyRef = useRef({ throughSeq: 0, recalls: new Map() });
+  const historyRef = useRef({ throughSeq: 0, recalls: new Map(), hidden: new Set(), cleared: {} });
   const reconnect = useRef();
   const activeRoom = useRef(selected);
   const stateRef = useRef(state);
@@ -52,8 +52,21 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     setHistoryVersion(value => value + 1);
     if (cleared) window.desktop?.historyCleared?.().catch(() => {});
   }, []);
+  // 只对自己删除消息、清空会话：并进本地历史，列表、侧栏和打开着的话题立即更新。
+  const hideLocally = useCallback(({ messageIds = [], cleared = {} }) => {
+    const history = historyRef.current;
+    let changed = false;
+    for (const id of messageIds) if (!history.hidden.has(id)) { history.hidden.add(id); changed = true; }
+    for (const [roomId, seq] of Object.entries(cleared)) if ((history.cleared[roomId] || 0) < seq) { history.cleared[roomId] = seq; changed = true; }
+    if (!changed) return;
+    setMessages(previous => Object.fromEntries(Object.entries(previous).map(([id, items]) => [id, merge(items, [], history)])));
+    setState(previous => previous ? sanitizeState(previous, history) : previous);
+    setHistoryVersion(value => value + 1);
+    setThreadTick(tick => ({ rootId: '*', n: tick.n + 1 }));
+  }, []);
+  const adoptCleared = next => { Object.assign(historyRef.current.cleared, next.cleared || {}); };
   const refresh = useCallback(async () => {
-    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); setState(sanitizeState(next, historyRef.current)); } return next; }
+    try { const next = await api('state'); if (!logoutPending.current) { syncHistory(next.recalls, next.clearedThroughSeq); adoptCleared(next); setState(sanitizeState(next, historyRef.current)); } return next; }
     catch (error) { if (error.status === 401 && !logoutPending.current) location.reload(); throw error; }
   }, [syncHistory]);
   const applyReceipt = useCallback(receipt => {
@@ -117,7 +130,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     const joinError = sessionStorage.getItem('linliao.joinError');
     if (joinError) { sessionStorage.removeItem('linliao.joinError'); notify(joinError); }
     setBootstrap(result);
-    if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); setState(sanitizeState(result, historyRef.current)); }
+    if (result.me) { syncHistory(result.recalls, result.clearedThroughSeq); adoptCleared(result); setState(sanitizeState(result, historyRef.current)); }
     else { setState(null); setMessages({}); setHasMore({}); setConnected(false); }
   }, [syncHistory, notify]);
   useEffect(() => { start(); }, [start]);
@@ -224,6 +237,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
         if (data.type === 'message') { receive(data.message); stopTyping(data.message.roomId, data.message.senderId); }
         if (data.type === 'typing') setTyping(previous => ({ ...previous, [data.roomId]: { ...previous[data.roomId], [data.userId]: Date.now() + 5000 } }));
         if (data.type === 'message-recalled') { syncHistory([data.message]); applyEdit(data.message); }
+        if (data.type === 'messages-hidden') hideLocally({ messageIds: data.messageIds });
+        if (data.type === 'room-cleared') hideLocally({ cleared: { [data.roomId]: data.throughSeq } });
         if (data.type === 'history-cleared') { syncHistory([], data.throughSeq); refresh().catch(error => notify(error.message)); }
         if (data.type === 'message-reads') applyReceipt(data);
         if (data.type === 'message-reactions') applyReactions(data);
@@ -269,7 +284,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     window.addEventListener('linliao:resume', resume);
     document.addEventListener('visibilitychange', resume);
     return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); document.removeEventListener('visibilitychange', resume); };
-  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, syncHistory, stopTyping]);
+  }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, hideLocally, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }
     let cancelled = false;
@@ -310,5 +325,5 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
   }, []);
   function updateMe(me) { setState(previous => ({ ...previous, me: { ...previous.me, ...me }, users: previous.users.map(user => user.id === me.id ? { ...user, ...me } : user) })); }
   return { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords };
+    syncHistory, receive, markMessageRead, loadOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, hideLocally };
 }

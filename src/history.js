@@ -1,7 +1,9 @@
 // 引用里的原消息在本地被撤回或清空后，同样只保留标识。
 const sanitizeReply = (reply, history) => !reply || reply.missing || reply.recalled ? reply :
   reply.seq <= history.throughSeq ? { id: reply.id, missing: true } : history.recalls.has(reply.id) ? { id: reply.id, seq: reply.seq, senderId: reply.senderId, recalled: true } : reply;
-export const sanitizeMessage = (message, history) => !message || message.seq <= history.throughSeq ? null :
+// 只对自己删除的消息、清空过的会话里更早的消息：本地一律当作不存在。
+const hiddenLocally = (message, history) => history.hidden?.has(message.id) || message.seq <= (history.cleared?.[message.roomId] || 0);
+export const sanitizeMessage = (message, history) => !message || message.seq <= history.throughSeq || hiddenLocally(message, history) ? null :
   (message.recalledAt || history.recalls.has(message.id)) ? (message.recalledAt && !message.text && !message.attachments.length && !message.readBy?.length && message.replyTo === null ? message
     : { ...message, recalledAt: message.recalledAt || history.recalls.get(message.id), text: '', attachments: [], readBy: [], replyTo: null })
   : message.replyTo && sanitizeReply(message.replyTo, history) !== message.replyTo ? { ...message, replyTo: sanitizeReply(message.replyTo, history) } : message;

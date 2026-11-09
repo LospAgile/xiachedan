@@ -54,6 +54,9 @@ export default function App() {
   const [replying, setReplying] = useState(null);
   const [editing, setEditing] = useState(null);
   const [removingMessage, setRemovingMessage] = useState(null);
+  // 只对自己删除：要删的消息标识；清空会话：目标会话。
+  const [hiding, setHiding] = useState(null);
+  const [clearing, setClearing] = useState(null);
   // 当前会话的置顶消息；横条依次显示，点一下跳到那条消息并换到下一条。
   const [pins, setPins] = useState({ roomId: null, pins: [], canPin: false });
   const [pinIndex, setPinIndex] = useState(0);
@@ -145,7 +148,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, hideLocally } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction, reorder: reorderPinned } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
@@ -419,11 +422,12 @@ export default function App() {
     const pin = target.pinned ? 'unpin' : 'pin';
     const mute = target.muted ? 'unmute' : 'mute';
     const unreadNow = Boolean(unread[target.id]?.hasUnread || target.markedUnread);
-    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted, unread: unreadNow }, [
+    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted, unread: unreadNow, canClear: true }, [
       { id: unreadNow ? 'read' : 'unread', label: unreadNow ? '标为已读' : '标为未读', action: () => unreadNow ? markRead(target) : conversationAction('mark-unread', target.id, conversationScope) },
       { id: pin, label: target.pinned ? '取消置顶' : '置顶对话', action: () => conversationAction(pin, target.id, conversationScope) },
       { id: mute, label: target.muted ? '取消免打扰' : '消息免打扰', action: () => conversationAction(mute, target.id, conversationScope) },
       { id: 'export', label: '导出聊天记录', action: () => downloadExport(target.id) },
+      { id: 'clear', label: '清空聊天记录（仅自己）', action: () => setClearing(target) },
       { id: 'remove', label: '移除对话', action: () => conversationAction('remove', target.id, conversationScope) },
     ], '对话操作');
   }
@@ -447,6 +451,7 @@ export default function App() {
       const latest = current.messages[message.roomId]?.find(item => item.id === message.id) || threadMessages.current.find(item => item.id === message.id);
       if (!latest || latest.recalledAt) return;
       if (action === 'recall') setRecalling(latest);
+      if (action === 'hide') setHiding([latest.id]);
       if (action === 'remove') setRemovingMessage(latest);
       if (action === 'pin' || action === 'unpin') togglePin(latest, action === 'pin');
       if (action === 'save' || action === 'unsave') toggleSaved(latest, action === 'save');
@@ -466,7 +471,7 @@ export default function App() {
         return copy.catch(error => notify(error.message));
       }
     };
-    showContextMenu(event, { kind: 'message', canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
+    showContextMenu(event, { kind: 'message', canSelect: canReply && !inThread, canHide: !message.recalledAt, canReply: canReply && !inThread, canQuote: Boolean(quote), canThread: canReply && !message.threadOf, canReact, canForward: canReply, canCopy, canLink: !message.recalledAt, canEdit, canPin, pinned, canSave: canReply, saved: isSaved, canRemind: canReply, canRecall, canRemove }, [
       ...(canReply && !inThread ? [{ id: 'reply', label: '回复', action: () => act('reply') }] : []),
       ...(quote ? [{ id: 'quote', label: '引用所选文字', action: () => act('quote') }] : []),
       ...(canReact ? [{ id: 'react', label: '回应', action: () => act('react') }] : []),
@@ -479,6 +484,7 @@ export default function App() {
       ...(canReply ? [{ id: isSaved ? 'unsave' : 'save', label: isSaved ? '取消收藏' : '收藏', action: () => act(isSaved ? 'unsave' : 'save') }] : []),
       ...(canPin ? [{ id: pinned ? 'unpin' : 'pin', label: pinned ? '取消置顶消息' : '置顶消息', action: () => act(pinned ? 'unpin' : 'pin') }] : []),
       ...(canRecall ? [{ id: 'recall', label: '撤回消息', action: () => act('recall') }] : []),
+      ...(!message.recalledAt ? [{ id: 'hide', label: '删除（仅自己）', action: () => act('hide') }] : []),
       ...(canRemove ? [{ id: 'remove', label: '删除消息（管理员）', action: () => act('remove') }] : []),
     ], '消息操作');
   }
@@ -740,6 +746,7 @@ export default function App() {
       {selection ? <div className="selection-bar glass" role="toolbar" aria-label="多选消息">
         <span>已选 <b>{selection.length}</b> 条</span>
         <button className="secondary-button" onClick={() => setSelection(null)}>取消</button>
+        <button className="secondary-button" disabled={!selection.length} onClick={() => setHiding([...selection])}>删除</button>
         <button className="primary-button" disabled={!selection.length} onClick={() => setForwarding([...selection])}>转发</button>
       </div> : room.kind === 'group' && room.allMuted && !isGroupManager ? <div className="muted-notice glass" role="status">全员禁言中，只有群主和管理员可以发言</div> : state.me.muted ? <div className="muted-notice glass" role="status">你已被管理员禁言{state.me.mutedUntil ? `，${new Date(state.me.mutedUntil).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 后恢复` : ''}</div> : <Composer injectDraft={injectDraft} sendKey={chatPrefs.sendKey} onDraft={(id, text) => setDraftTexts(previous => (previous[id] || '') === text ? previous : { ...previous, [id]: text })} room={room} connected={connected && !loggingOut} onQueue={(payload, preview) => { sticky.current = true; outbox.send(payload, preview); }} notify={notify} privateMode={privateMode}
         members={room.kind === 'direct' ? [] : groupMembers.filter(user => user.id !== state.me.id)} canMentionAll={room.kind === 'group' || (room.kind === 'public' && (isOwner || isAdmin))}
@@ -822,6 +829,10 @@ export default function App() {
     {readDetail && currentMessages.some(message => message.id === readDetail.id) && <ReadDetail anchor={readDetail} message={currentMessages.find(message => message.id === readDetail.id)} members={groupMembers.filter(user => user.id !== state.me.id)} onClose={closeReadDetail}
       onOpenProfile={(user, element) => { openProfile(user, element); setReadDetail(null); }} />}
     {contextMenu && <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />}
+    {hiding && <ConfirmDialog title={hiding.length > 1 ? `删除这 ${hiding.length} 条消息？` : '删除这条消息？'} subtitle="只从你这里删除，会话里的其他人仍然能看到。" confirmLabel="删除" busyLabel="正在删除…" danger
+      onConfirm={async () => { const result = await api('messages/hide', { messageIds: hiding }); hideLocally({ messageIds: result.messageIds }); setSelection(null); await refresh(); notify('已删除'); }} onClose={() => setHiding(null)} />}
+    {clearing && <ConfirmDialog title={`清空「${clearing.name}」的聊天记录？`} subtitle="只清空你这里的记录，会话里的其他人不受影响；之后的新消息照常显示。" confirmLabel="清空" busyLabel="正在清空…" danger
+      onConfirm={async () => { const result = await api('room-clear', { roomId: clearing.id }); hideLocally({ cleared: { [result.roomId]: result.throughSeq } }); setLastRead(previous => ({ ...previous, [result.roomId]: Math.max(previous[result.roomId] || 0, result.throughSeq) })); await refresh(); notify('聊天记录已清空'); }} onClose={() => setClearing(null)} />}
     {removingMessage && <ConfirmDialog title="删除这条消息？" subtitle={`会话里的所有人都会看到「管理员删除了一条消息」，内容无法恢复。这次操作会记入操作日志。`} confirmLabel="删除" busyLabel="正在删除…" danger
       onConfirm={async () => { const { message } = await api('admin/delete-message', { messageId: removingMessage.id }); syncHistory([message]); applyEdit(message); notify('消息已删除'); }} onClose={() => setRemovingMessage(null)} />}
     {modal === 'audit' && <AuditDialog onClose={() => setModal(null)} />}

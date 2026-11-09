@@ -217,7 +217,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const roomsFor = userId => stmt('SELECT * FROM rooms ORDER BY created_at').all()
     .filter(room => canAccess(room, userId)).map(room => ({ id: room.id, name: room.name, kind: room.kind,
-      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 1`).get(room.id)),
+      members: JSON.parse(room.members), lastMessage: serializeMessage(stmt(`SELECT * FROM messages WHERE room_id=? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 1`).get(room.id, userId, userId)),
       avatar: roomAvatar(room.id), ...managerView(room, userId), autoDelete: stmt('SELECT seconds FROM room_auto_delete WHERE room_id=?').get(room.id)?.seconds || 0, ...(room.kind === 'group' ? groupSettings(room) : {}) }));
   // 禁言状态：返回截止时间，一直禁言为 Infinity，没有禁言为 null；过期的记录顺手清掉。
   const muteOf = id => {
@@ -249,6 +249,12 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const notesFor = id => Object.fromEntries(stmt('SELECT user_id, note FROM user_notes WHERE owner_id=?').all(id).map(row => [row.user_id, row.note]));
   const foldersFor = id => stmt('SELECT id, name, room_ids FROM user_folders WHERE user_id=? ORDER BY created_at').all(id).map(row => ({ id: row.id, name: row.name, roomIds: JSON.parse(row.room_ids) }));
   const keywordsFor = id => JSON.parse(stmt('SELECT keywords FROM user_keywords WHERE user_id=?').get(id)?.keywords || '[]');
+  // 「只对自己删除」：删掉的消息和清空过的会话，在这位成员的列表、未读、搜索、文件、导出里都不再出现。
+  // 用法：在 WHERE 里拼上 visibleTo('m')，参数里补两个 userId。
+  const visibleTo = (table = 'messages') => `${table}.id NOT IN (SELECT message_id FROM message_hidden WHERE user_id=?) AND ${table}.seq > COALESCE((SELECT through_seq FROM room_cleared c WHERE c.user_id=? AND c.room_id=${table}.room_id), 0)`;
+  const hiddenFor = (userId, row) => Boolean(stmt('SELECT 1 FROM message_hidden WHERE user_id=? AND message_id=?').get(userId, row.id)
+    || (stmt('SELECT through_seq FROM room_cleared WHERE user_id=? AND room_id=?').get(userId, row.room_id ?? row.roomId)?.through_seq || 0) >= row.seq);
+  const clearedFor = userId => Object.fromEntries(stmt('SELECT room_id, through_seq FROM room_cleared WHERE user_id=?').all(userId).map(row => [row.room_id, row.through_seq]));
   // 手机推送（PWA）：订阅属于某台设备的某次登录，退出或被下线后不再推送；免打扰和隐私模式按这台设备的设置。
   const pushSessionOf = req => cloud ? auth.tokenHash(req) : hash(tokenFrom(req));
   const pushSessionAlive = row => cloud
@@ -311,7 +317,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const rooms = roomsFor(user.id);
     const allowed = new Set(rooms.map(room => room.id));
     const recalls = stmt('SELECT m.id, m.room_id AS roomId, r.recalled_at AS recalledAt FROM message_recalls r JOIN messages m ON m.id=r.message_id').all().filter(row => allowed.has(row.roomId));
-    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), reactions: REACTIONS };
+    return { me: { ...user, ...(until => ({ muted: Boolean(until), mutedUntil: until === Infinity ? null : until }))(muteOf(user.id)) }, workspace: { ...spaceInfo(), retentionDays: retentionDays() }, users: users(), notes: notesFor(user.id), folders: foldersFor(user.id), keywords: keywordsFor(user.id), rooms, recalls, clearedThroughSeq: clearedThroughSeq(), cleared: clearedFor(user.id), reactions: REACTIONS };
   };
   const deliver = (event, accepts) => {
     const payload = JSON.stringify(event);
@@ -321,7 +327,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   };
   const broadcast = (event, roomId) => {
     const room = roomId ? stmt('SELECT * FROM rooms WHERE id=?').get(roomId) : null;
-    deliver(event, socket => !roomId || canAccess(room, socket.userId));
+    // 编辑、撤回、回应等更新不发给已经「只对自己删除」了这条消息的人，免得它在页面上重新冒出来。
+    const targetId = event.type !== 'message' && (event.message?.id || event.messageId);
+    const target = targetId ? stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(targetId) : null;
+    deliver(event, socket => (!roomId || canAccess(room, socket.userId)) && !(target && hiddenFor(socket.userId, target)));
     if (event.type === 'message' && room) pushMessage(event.message, room);
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
@@ -703,11 +712,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls) THEN 1 ELSE 0 END), 0) AS unreadCount,
       COALESCE(SUM(CASE WHEN sender_id<>? AND id NOT IN (SELECT message_id FROM message_recalls)
         AND EXISTS (SELECT 1 FROM message_mentions WHERE message_id=messages.id AND user_id IN (?, '*')) THEN 1 ELSE 0 END), 0) AS mentionCount
-      FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD}`);
+      FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()}`);
     const rooms = stmt('SELECT id, kind, members FROM rooms').all().filter(room => canAccess(room, req.user.id));
     res.json({ rooms: rooms.map(room => {
       const afterSeq = Object.hasOwn(cursors, room.id) ? cursors[room.id] : 0;
-      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq) };
+      return { id: room.id, afterSeq, ...count.get(afterSeq, req.user.id, req.user.id, req.user.id, room.id, afterSeq, req.user.id, req.user.id) };
     }) });
   });
   app.get('/api/invite', (_req, res) => {
@@ -841,6 +850,33 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     stmt('INSERT INTO user_keywords VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET keywords=excluded.keywords').run(req.user.id, JSON.stringify(keywords));
     deliver({ type: 'keywords', keywords }, socket => socket.userId === req.user.id);
     res.json({ keywords });
+  });
+  // 只对自己删除消息：别人照常能看到；顺带去掉自己的收藏和提醒。
+  app.post('/api/messages/hide', (req, res) => {
+    rateLimit(req, 'hide', 60);
+    const ids = req.body?.messageIds;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some(id => typeof id !== 'string' || id.length > 100)) throw fail('消息无效');
+    const rows = [...new Set(ids)].map(id => stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(id));
+    if (rows.some(row => !row || !canAccess(stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id), req.user.id))) throw fail('消息不存在或你无权查看', 404);
+    const now = Date.now();
+    for (const row of rows) {
+      stmt('INSERT OR IGNORE INTO message_hidden VALUES (?,?,?)').run(req.user.id, row.id, now);
+      stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, row.id);
+      stmt('DELETE FROM reminders WHERE user_id=? AND message_id=?').run(req.user.id, row.id);
+    }
+    deliver({ type: 'messages-hidden', messageIds: rows.map(row => row.id) }, socket => socket.userId === req.user.id);
+    res.json({ messageIds: rows.map(row => row.id) });
+  });
+  // 只对自己清空会话：记下当前最后一条的位置，之前的消息对自己不再显示，以后的新消息照常。
+  app.post('/api/room-clear', (req, res) => {
+    rateLimit(req, 'room-clear', 30);
+    const room = requireRoom(req.body?.roomId, req.user.id);
+    const throughSeq = stmt('SELECT COALESCE(MAX(seq), 0) AS n FROM messages WHERE room_id=?').get(room.id).n;
+    stmt('INSERT INTO room_cleared VALUES (?,?,?,?) ON CONFLICT(user_id, room_id) DO UPDATE SET through_seq=excluded.through_seq, cleared_at=excluded.cleared_at').run(req.user.id, room.id, throughSeq, Date.now());
+    stmt(`DELETE FROM saved_messages WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
+    stmt(`DELETE FROM reminders WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE room_id=? AND seq<=?)`).run(req.user.id, room.id, throughSeq);
+    deliver({ type: 'room-cleared', roomId: room.id, throughSeq }, socket => socket.userId === req.user.id);
+    res.json({ roomId: room.id, throughSeq });
   });
   app.get('/api/push', (_req, res) => res.json({ publicKey: vapidPublicKey(vapidKey()) }));
   // 订阅和更新这台设备的推送设置共用一个接口：muted 是这台设备上设了免打扰的会话，private 是隐私模式。
@@ -1154,18 +1190,18 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     // 断线重连后从本地最后一条往后补齐，每页最多 200 条。
     if (req.query.after !== undefined) {
       const after = Math.max(0, Number(req.query.after) || 0);
-      const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} ORDER BY seq LIMIT 201`).all(room.id, after);
+      const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq LIMIT 201`).all(room.id, after, req.user.id, req.user.id);
       return res.json({ messages: withReads(rows.slice(0, 200).map(serializeMessage)), hasNewer: rows.length > 200 });
     }
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
-    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} ORDER BY seq DESC LIMIT 51`).all(room.id, before);
+    const rows = stmt(`SELECT * FROM messages WHERE room_id=? AND seq<? AND ${NOT_THREAD} AND ${visibleTo()} ORDER BY seq DESC LIMIT 51`).all(room.id, before, req.user.id, req.user.id);
     res.json({ messages: withReads(rows.slice(0, 50).reverse().map(serializeMessage)), hasMore: rows.length > 50 });
   });
   // 消息链接：按消息标识找到所在会话和位置，供客户端跳转。没有权限与不存在一律返回 404，不泄露消息是否存在。
   app.get('/api/message-location', (req, res) => {
     const row = typeof req.query.id === 'string' && req.query.id.length <= 100 && stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(req.query.id);
     const room = row && row.seq > clearedThroughSeq() && stmt('SELECT * FROM rooms WHERE id=?').get(row.room_id);
-    if (!room || !canAccess(room, req.user.id)) throw fail('消息不存在或你无权查看', 404);
+    if (!room || !canAccess(room, req.user.id) || hiddenFor(req.user.id, row)) throw fail('消息不存在或你无权查看', 404);
     const threadOf = stmt('SELECT root_id FROM message_threads WHERE message_id=?').get(row.id)?.root_id || null;
     res.json({ id: row.id, roomId: row.room_id, seq: row.seq, threadOf });
   });
@@ -1174,7 +1210,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const root = typeof req.query.rootId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.query.rootId);
     if (!root || root.seq <= clearedThroughSeq()) throw fail('话题不存在', 404);
     requireRoom(root.room_id, req.user.id);
-    const replies = stmt('SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? ORDER BY m.seq LIMIT 500').all(root.id);
+    const replies = stmt(`SELECT m.* FROM message_threads t JOIN messages m ON m.id=t.message_id WHERE t.root_id=? AND ${visibleTo('m')} ORDER BY m.seq LIMIT 500`).all(root.id, req.user.id, req.user.id);
     res.json({ root: withReads([serializeMessage(root)])[0], replies: withReads(replies.map(serializeMessage)) });
   });
   // 定时消息：最早 1 分钟后、最晚 30 天内；每人最多 50 条待发送。
@@ -1423,7 +1459,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const members = JSON.parse(room.members);
     const title = room.kind === 'direct' ? nameOf(members.find(id => id !== req.user.id) || req.user.id) : room.name;
     const blocks = [];
-    for (const row of stmt('SELECT * FROM messages WHERE room_id=? AND seq>? ORDER BY seq').iterate(room.id, clearedThroughSeq())) {
+    for (const row of stmt(`SELECT * FROM messages WHERE room_id=? AND seq>? AND ${visibleTo()} ORDER BY seq`).iterate(room.id, clearedThroughSeq(), req.user.id, req.user.id)) {
       const message = serializeMessage(row);
       const lines = [`${time(message.createdAt)}  ${senderOf(message)}${message.forwardedFrom ? `（转发自 ${nameOf(message.forwardedFrom.senderId)}）` : ''}${message.editedAt ? '（已编辑）' : ''}`];
       if (message.recalledAt) lines.push(message.removedBy ? '（消息已被管理员删除）' : '（消息已撤回）');
@@ -1450,8 +1486,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
     const media = "json_extract(f.value, '$.mime') LIKE 'image/%' OR json_extract(f.value, '$.mime') LIKE 'video/%'";
     const rows = stmt(`SELECT m.id AS messageId, m.seq, m.sender_id AS senderId, m.created_at AS createdAt, f.value AS file FROM messages m, json_each(m.attachments) f
-      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
-      ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before);
+      WHERE m.room_id=? AND m.seq>? AND m.seq<? AND m.id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo('m')} AND ${kind === 'media' ? `(${media})` : `NOT (${media})`}
+      ORDER BY m.seq DESC, f.key LIMIT 61`).all(room.id, clearedThroughSeq(), before, req.user.id, req.user.id);
     res.json({ items: rows.slice(0, 60).map(row => ({ ...row, file: JSON.parse(row.file) })), hasMore: rows.length > 60 });
   });
   // 只读检索文字与附件文件名：带 roomId 时只查该会话，否则查自己能访问的全部会话；撤回与已清空的消息不会命中。
@@ -1479,9 +1515,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     rateLimit(req, 'search', 120);
     const pattern = `%${query.replace(/[\\%_]/g, char => `\\${char}`)}%`;
     const keyword = query ? "AND (text LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(messages.attachments) WHERE json_extract(value, '$.name') LIKE ? ESCAPE '\\'))" : '';
-    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls)
+    const rows = stmt(`SELECT * FROM messages WHERE room_id IN (${roomIds.map(() => '?').join(',')}) AND seq>? AND id NOT IN (SELECT message_id FROM message_recalls) AND ${visibleTo()}
       ${keyword} ${filters.map(filter => `AND ${filter}`).join(' ')}
-      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), ...(query ? [pattern, pattern] : []), ...args);
+      ORDER BY seq DESC LIMIT 50`).all(...roomIds, clearedThroughSeq(), req.user.id, req.user.id, ...(query ? [pattern, pattern] : []), ...args);
     res.json({ messages: rows.map(serializeMessage) });
   });
   const upload = multer({ storage: multer.diskStorage({ destination: uploadDir, filename: (_req, _file, cb) => cb(null, randomUUID()) }), limits: { fileSize: MAX_FILE, files: 1, fields: 4 } });
