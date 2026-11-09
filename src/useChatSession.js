@@ -278,7 +278,10 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     }
     connect();
     // 告诉服务端这台设备的页面是否在前台：在前台时不发手机推送。
-    const presence = () => { if (pushId() && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'presence', pushId: pushId(), visible: document.visibilityState === 'visible' })); };
+    const presence = (visible = document.visibilityState === 'visible') => { if (pushId() && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'presence', pushId: pushId(), visible })); };
+    // 离开页面（包括被浏览器放进往返缓存冻结）时先说一声不在前台，免得服务端以为还在看而不推送。
+    const leave = () => presence(false);
+    window.addEventListener('pagehide', leave);
     const resume = () => {
       presence();
       if (document.visibilityState === 'hidden' || cancelled || logoutPending.current) return;
@@ -288,7 +291,7 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     window.addEventListener('online', resume);
     window.addEventListener('linliao:resume', resume);
     document.addEventListener('visibilitychange', resume);
-    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); document.removeEventListener('visibilitychange', resume); };
+    return () => { cancelled = true; clearTimeout(reconnect.current); socket?.close(); window.removeEventListener('online', resume); window.removeEventListener('linliao:resume', resume); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', resume); };
   }, [state?.me.id, loggingOut, refresh, receive, notify, applyReceipt, applyReactions, applyEdit, applyPoll, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally, syncHistory, stopTyping]);
   useEffect(() => {
     if (!state?.me.id || !selected || loggingOut) { setLoading(false); return; }

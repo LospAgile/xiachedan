@@ -70,6 +70,7 @@ describe('只对自己删除消息、清空会话', () => {
     await alice.post('/api/saved', { messageId: message.id, saved: true });
     await alice.post('/api/messages/hide', { messageIds: [message.id] });
     assert.equal((await alice.get('/api/saved')).body.items.some(item => item.message.id === message.id), false);
+    assert.equal((await alice.post('/api/saved', { messageId: message.id, saved: true })).status, 404);
     const secret = (await bob.post('/api/rooms', { name: '小群', memberIds: [alice.id] })).body.id;
     const other = (await send(bob, secret, '别人的群')).body.message;
     assert.equal((await carol.post('/api/messages/hide', { messageIds: [other.id] })).status, 404);

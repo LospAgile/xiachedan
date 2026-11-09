@@ -52,9 +52,9 @@ describe('Web Push 加密与签名', () => {
   });
 
   test('推送地址只允许 HTTPS 的已知推送服务', () => {
-    for (const url of ['https://fcm.googleapis.com/fcm/send/x', 'https://web.push.apple.com/abc', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://wns2-par02p.notify.windows.com/w/?token=x', 'https://jmt17.google.com/fcm/send/x'])
+    for (const url of ['https://fcm.googleapis.com/fcm/send/x', 'https://web.push.apple.com/abc', 'https://updates.push.services.mozilla.com/wpush/v2/x', 'https://wns2-par02p.notify.windows.com/w/?token=x', 'https://jmt17.google.com/fcm/send/x', 'https://android.googleapis.com/gcm/send/x'])
       assert.ok(validEndpoint(url), url);
-    for (const url of ['http://fcm.googleapis.com/x', 'https://127.0.0.1/x', 'https://evil.com/push.apple.com', 'https://google.com.evil.com/x', 'https://fcm.googleapis.com:8443/x', 'https://user@fcm.googleapis.com/x', 'not a url'])
+    for (const url of ['http://fcm.googleapis.com/x', 'https://127.0.0.1/x', 'https://evil.com/push.apple.com', 'https://google.com.evil.com/x', 'https://script.google.com/macros/s/x/exec', 'https://bucket.storage.googleapis.com/x', 'https://fcm.googleapis.com:8443/x', 'https://user@fcm.googleapis.com/x', 'not a url'])
       assert.equal(validEndpoint(url), false, url);
   });
 });

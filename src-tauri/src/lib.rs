@@ -484,8 +484,9 @@ fn desktop_open_url(app: AppHandle, webview: Webview, desktop: Shared<'_>, url: 
 
 // 会话独立窗口：只显示一个会话的聊天，不注入桌面桥——通知、角标和原生菜单仍由主窗口负责，
 // 独立窗口里的页面按普通网页处理（登录状态与主窗口共用）。
+// 必须是异步命令：Windows 上在同步命令里创建窗口会死锁（见 WebviewWindowBuilder::build 的说明）。
 #[tauri::command]
-fn desktop_open_window(app: AppHandle, webview: Webview, desktop: Shared<'_>, room_id: String, title: String) -> Result<bool, String> {
+async fn desktop_open_window(app: AppHandle, webview: Webview, desktop: Shared<'_>, room_id: String, title: String) -> Result<bool, String> {
   require_trusted(&webview, &desktop)?;
   if !valid_id(&room_id) || !room_id.chars().all(|char| char.is_ascii_alphanumeric() || char == '-') { return Err("会话无效".into()); }
   let label = format!("{ROOM_WINDOW}{room_id}");

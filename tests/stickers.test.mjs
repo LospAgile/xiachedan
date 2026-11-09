@@ -49,6 +49,14 @@ describe('自定义表情', () => {
     assert.equal((await bob.post('/api/stickers/use', { id: sticker.id, roomId: group })).status, 404);
   });
 
+  test('没发出去的表情副本最多 10 份，避免反复调用占满存储', async () => {
+    const [sticker] = (await alice.get('/api/stickers')).body.stickers;
+    const statuses = [];
+    for (let index = 0; index < 11; index++) statuses.push((await alice.post('/api/stickers/use', { id: sticker.id, roomId: group })).status);
+    assert.equal(statuses.filter(status => status === 201).length, 10);
+    assert.equal(statuses.at(-1), 429);
+  });
+
   test('不能收藏看不到的或不是图片的文件；删除后不能再用', async () => {
     const secret = (await bob.post('/api/rooms', { name: '小群', memberIds: [alice.id] })).body.id;
     const file = await upload(space, bob, secret, '秘密.png', PNG, 'image/png');

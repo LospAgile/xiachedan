@@ -266,9 +266,11 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   const pushSessionAlive = row => cloud
     ? Boolean(stmt('SELECT 1 FROM sessions WHERE token_hash=? AND user_id=? AND expires_at>?').get(row.session_hash, row.user_id, Date.now())) && auth.activeId(row.user_id)
     : Boolean(stmt('SELECT 1 FROM users WHERE id=? AND token_hash=?').get(row.user_id, row.session_hash));
+  let vapidCache = null;
   const vapidKey = () => {
+    if (vapidCache) return vapidCache;
     if (!stmt("SELECT 1 FROM space_settings WHERE key='vapid_jwk'").get()) stmt("INSERT OR IGNORE INTO space_settings VALUES ('vapid_jwk', ?)").run(JSON.stringify(createVapidKeys()));
-    return JSON.parse(stmt("SELECT value FROM space_settings WHERE key='vapid_jwk'").get().value);
+    return (vapidCache = JSON.parse(stmt("SELECT value FROM space_settings WHERE key='vapid_jwk'").get().value));
   };
   const pushContact = row => process.env.CHAT_PUSH_CONTACT || (row.origin.startsWith('https://') ? row.origin : 'https://github.com/ayogggua/xiachedan');
   // 这台设备正开着页面并且在前台时，由页面自己处理，不再推送。
@@ -337,7 +339,8 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const targetId = event.type !== 'message' && (event.message?.id || event.messageId);
     const target = targetId ? stmt('SELECT id, room_id, seq FROM messages WHERE id=?').get(targetId) : null;
     deliver(event, socket => (!roomId || canAccess(room, socket.userId)) && !(target && hiddenFor(socket.userId, target)));
-    if (event.type === 'message' && room) pushMessage(event.message, room);
+    // 推送放到下一轮事件循环，不拖慢消息接口的响应。
+    if (event.type === 'message' && room) setImmediate(() => { try { pushMessage(event.message, room); } catch (error) { console.error({ message: 'push failed', error: error.message }); } });
   };
   const setSession = (res, token) => res.cookie('linliao_session', token, { httpOnly: true, sameSite: 'strict', maxAge: 90 * 86400000, path: '/' });
   const userCreated = (req, res, name, avatar) => {
@@ -710,7 +713,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     db.exec('BEGIN');
     try {
       db.exec("INSERT OR IGNORE INTO pending_file_deletions SELECT id FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1");
-      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_cards; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
+      db.exec("DELETE FROM uploads WHERE purpose IN ('message','thumbnail') AND claimed=1; DELETE FROM upload_thumbnails; DELETE FROM message_reads; DELETE FROM message_recalls; DELETE FROM message_replies; DELETE FROM message_reply_quotes; DELETE FROM message_mentions; DELETE FROM message_reactions; DELETE FROM message_forwards; DELETE FROM message_bots; DELETE FROM message_edits; DELETE FROM message_versions; DELETE FROM message_nudges; DELETE FROM message_cards; DELETE FROM message_hidden; DELETE FROM message_removals; DELETE FROM room_pins; DELETE FROM saved_messages; DELETE FROM polls; DELETE FROM poll_votes; DELETE FROM message_threads; DELETE FROM message_bundles; DELETE FROM messages;");
       stmt('UPDATE history_state SET cleared_through_seq=? WHERE id=1').run(throughSeq);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -892,7 +895,9 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
       .run(id, fields.owner, fields.room ?? null, source.name, source.mime, source.size, fields.purpose, fields.claimed, Date.now());
     return id;
   };
-  const checkBudget = size => {
+  const checkBudget = (userId, size) => {
+    const quota = Number(process.env.CHAT_MAX_USER_BYTES || 0);
+    if (quota > 0 && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads WHERE owner_id=?').get(userId).n + size > quota) throw fail('你的存储空间已用完，请联系管理员', 507);
     if (cloud && stmt('SELECT COALESCE(SUM(size),0) AS n FROM uploads').get().n + size > storageBudget) throw fail('空间存储不足，请联系管理员清理附件', 507);
   };
   app.get('/api/stickers', (req, res) => res.json({ stickers: stickersFor(req.user.id) }));
@@ -904,7 +909,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     if (!STICKER_MIMES.includes(file.mime)) throw fail('只能把图片添加为表情');
     if (file.size > 5 * 1024 * 1024) throw fail('表情图片不能超过 5 MB');
     if (stmt('SELECT COUNT(*) AS n FROM user_stickers WHERE user_id=?').get(req.user.id).n >= 120) throw fail('最多收藏 120 个表情，先删掉一些');
-    checkBudget(file.size);
+    checkBudget(req.user.id, file.size);
     const id = linkUpload(file, { owner: req.user.id, purpose: 'sticker', claimed: 1 });
     stmt('INSERT INTO user_stickers VALUES (?,?,?)').run(id, req.user.id, Date.now());
     deliver({ type: 'stickers' }, socket => socket.userId === req.user.id);
@@ -925,7 +930,10 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const room = requireRoom(req.body?.roomId, req.user.id);
     const sticker = typeof req.body?.id === 'string' && stmt('SELECT u.* FROM user_stickers s JOIN uploads u ON u.id=s.id WHERE s.id=? AND s.user_id=?').get(req.body.id, req.user.id);
     if (!sticker) throw fail('表情不存在', 404);
-    checkBudget(sticker.size);
+    // 另存的附件发出去之前都算存储：同一时间最多 10 份没发出的，避免反复调用把空间占满。
+    const pending = stmt("SELECT COUNT(*) AS n FROM uploads u JOIN upload_stickers s ON s.upload_id=u.id WHERE u.owner_id=? AND u.claimed=0").get(req.user.id).n;
+    if (pending >= 10) throw fail('表情发得太快了，稍后再试', 429);
+    checkBudget(req.user.id, sticker.size);
     const id = linkUpload(sticker, { owner: req.user.id, room: room.id, purpose: 'message', claimed: 0 });
     stmt('INSERT INTO upload_stickers VALUES (?)').run(id);
     res.status(201).json({ attachment: { id, name: sticker.name, mime: sticker.mime, size: sticker.size } });
@@ -1368,7 +1376,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
   // 到点发送定时消息、推送提醒：发送人已无权访问会话时直接丢弃。
   // 按保留期限删除过期消息：每小时最多跑一次，每次最多 500 条，附件文件随后清理。
   let retentionCheckedAt = 0;
-  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders', 'message_cards'];
+  const MESSAGE_TABLES = ['message_bundles', 'message_reads', 'message_recalls', 'message_replies', 'message_reply_quotes', 'message_mentions', 'message_reactions', 'message_forwards', 'message_edits', 'message_versions', 'message_nudges', 'message_bots', 'message_removals', 'room_pins', 'saved_messages', 'polls', 'poll_votes', 'message_threads', 'reminders', 'message_cards', 'message_hidden'];
   // 删除一批消息：附件、所有关联数据一起清掉，再通知各会话的成员。
   const deleteMessages = rows => {
     if (!rows.length) return 0;
@@ -1427,7 +1435,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const row of stmt('SELECT * FROM reminders WHERE remind_at<=?').all(now)) {
       const message = stmt('SELECT * FROM messages WHERE id=?').get(row.message_id);
       const room = message && stmt('SELECT * FROM rooms WHERE id=?').get(message.room_id);
-      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); continue; }
+      if (!message || recalledAt(message.id) || message.seq <= clearedThroughSeq() || !canAccess(room, row.user_id)) { stmt('DELETE FROM reminders WHERE id=?').run(row.id); pushedReminders.delete(row.id); continue; }
       // 不在线时先推送到手机（每条提醒只推一次），等上线后再在页面里提醒。
       if (!online.has(row.user_id)) {
         if (!pushedReminders.has(row.id)) {
@@ -1511,6 +1519,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     const message = typeof req.body?.messageId === 'string' && stmt('SELECT * FROM messages WHERE id=?').get(req.body.messageId);
     if (!message || message.seq <= clearedThroughSeq()) throw fail('消息不存在或已被清空', 404);
     requireRoom(message.room_id, req.user.id);
+    if (req.body.saved !== false && hiddenFor(req.user.id, message)) throw fail('消息不存在或已被清空', 404);
     if (req.body.saved === false) stmt('DELETE FROM saved_messages WHERE user_id=? AND message_id=?').run(req.user.id, message.id);
     else {
       if (recalledAt(message.id)) throw fail('消息已撤回');
@@ -1929,6 +1938,7 @@ export async function startServer({ dataDir = path.join(root, '.data'), port = 4
     for (const [key, value] of failures) if (value.until < Date.now()) failures.delete(key);
     const old = stmt('SELECT id FROM uploads WHERE claimed=0 AND created_at<?').all(Date.now() - 86400000);
     for (const file of old) { try { unlinkSync(path.join(uploadDir, file.id)); } catch {} stmt('DELETE FROM uploads WHERE id=?').run(file.id); stmt('DELETE FROM upload_thumbnails WHERE upload_id=? OR thumb_id=?').run(file.id, file.id); }
+    stmt('DELETE FROM upload_stickers WHERE upload_id NOT IN (SELECT id FROM uploads)').run();
   }, 30000);
   heartbeat.unref();
   try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); }
