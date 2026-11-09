@@ -602,6 +602,7 @@ button.message-read-status.is-read { color: var(--text-1); }
 .search-input:focus-within { box-shadow: 0 0 0 2px rgba(232, 120, 79, .35); }
 .member-picker { display: flex; flex-direction: column; gap: 2px; max-height: 260px; margin-top: 8px; overflow-y: auto; }
 .member-option { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
+.member-option.disabled { opacity: .45; cursor: default; }
 .member-option input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .member-option:has(input:focus-visible) { outline: 2px solid var(--accent-bright); outline-offset: -2px; }
 .member-option > span:not(.selection-check):not(.avatar):not(.room-avatar) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 500; }

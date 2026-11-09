@@ -297,17 +297,25 @@ export default function App() {
     row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
     if (matchMedia('(max-width: 760px)').matches) setShowMembers(false);
   }
-  async function forwardTo(target, merge = false, comment = '') {
-    const result = await api('forward', { roomId: target.id, messageIds: forwarding, merge });
-    setSelection(null);
-    if (target.id === selected) for (const message of result.messages) receive(message);
-    // 附言作为一条普通消息，跟在转发的内容之后。
-    if (comment) {
-      try { const { message } = await api('messages', { roomId: target.id, text: comment, clientId: uid() }); if (target.id === selected) receive(message); }
-      catch (error) { notify(`已转发，但附言没有发出：${error.message}`); await refresh(); return; }
+  // 逐个会话转发；有失败的会话时报出来，成功的照常完成。
+  async function forwardTo(targets, merge = false, comment = '') {
+    const failed = [];
+    for (const target of targets) {
+      try {
+        const result = await api('forward', { roomId: target.id, messageIds: forwarding, merge });
+        if (target.id === selected) for (const message of result.messages) receive(message);
+        // 附言作为一条普通消息，跟在转发的内容之后。
+        if (comment) {
+          try { const { message } = await api('messages', { roomId: target.id, text: comment, clientId: uid() }); if (target.id === selected) receive(message); }
+          catch (error) { failed.push(`「${target.name}」的附言没有发出：${error.message}`); }
+        }
+      } catch (error) { failed.push(`「${target.name}」：${error.message}`); }
     }
-    notify(`已转发到「${target.name}」`);
+    setSelection(null);
     await refresh();
+    const done = targets.length - failed.filter(item => !item.includes('的附言')).length;
+    if (failed.length && !done) throw new Error(failed.join('；'));
+    notify(failed.length ? `已转发到 ${done} 个会话；${failed.join('；')}` : targets.length === 1 ? `已转发到「${targets[0].name}」` : `已转发到 ${targets.length} 个会话`);
   }
   async function votePoll(message, options) {
     try { applyPoll(await api('polls/vote', { messageId: message.id, options })); }
