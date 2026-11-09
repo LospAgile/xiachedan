@@ -18,6 +18,7 @@ import { syncPush } from './push';
 import { useAppLock, LockScreen, finishLockReset } from './AppLock';
 import { TextPreviewDialog, openPdf, previewKind } from './FilePreview';
 import { pendingShareId, takeShare } from './shareTarget';
+import { popoutRoom } from './popout';
 import { messageLink, groupInviteLink, plainText } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
@@ -49,7 +50,7 @@ function selectedQuote(messageId) {
 }
 
 export default function App() {
-  const [selected, setSelected] = useState('lobby');
+  const [selected, setSelected] = useState(popoutRoom || 'lobby');
   const [lastRead, setLastRead] = useState(() => readStorage('linliao.read', {}));
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
@@ -130,7 +131,7 @@ export default function App() {
   const [scrolledUp, setScrolledUp] = useState(false);
   const [awaySeq, setAwaySeq] = useState(null);
   const [unreadAnchor, setUnreadAnchor] = useState(null);
-  const [mobileChat, setMobileChat] = useState(false);
+  const [mobileChat, setMobileChat] = useState(Boolean(popoutRoom));
   const [mobileTab, setMobileTab] = useState('chats');
   const [theme, setTheme] = useTheme();
   const [appearance, setAppearance] = useAppearance();
@@ -458,11 +459,30 @@ export default function App() {
     setLastRead(previous => seq > (previous[target.id] || 0) ? { ...previous, [target.id]: seq } : previous);
     if (target.markedUnread) conversationAction('mark-read', target.id, conversationScope);
   }
+  // 桌面端：会话在独立窗口里打开（再点一次会切到已经打开的那个窗口）。
+  function openRoomWindow(target) {
+    window.desktop?.openRoomWindow?.(target.id, target.name).catch(error => notify(error.message));
+  }
+  // 把会话从侧栏拖到窗口外面松开，也是在独立窗口打开。
+  function dragOut(event, target) {
+    if (!window.desktop?.openRoomWindow || event.pointerType !== 'mouse' || event.button !== 0) return;
+    const start = { x: event.clientX, y: event.clientY }, node = event.currentTarget;
+    try { node.setPointerCapture(event.pointerId); } catch {}
+    const up = upEvent => {
+      node.removeEventListener('pointerup', up); node.removeEventListener('pointercancel', cancel);
+      const outside = upEvent.clientX < 0 || upEvent.clientY < 0 || upEvent.clientX >= innerWidth || upEvent.clientY >= innerHeight;
+      if (outside && Math.hypot(upEvent.clientX - start.x, upEvent.clientY - start.y) > 40) openRoomWindow(target);
+    };
+    const cancel = () => { node.removeEventListener('pointerup', up); node.removeEventListener('pointercancel', cancel); };
+    node.addEventListener('pointerup', up); node.addEventListener('pointercancel', cancel);
+  }
   function conversationMenu(event, target) {
     const pin = target.pinned ? 'unpin' : 'pin';
     const mute = target.muted ? 'unmute' : 'mute';
     const unreadNow = Boolean(unread[target.id]?.hasUnread || target.markedUnread);
-    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted, unread: unreadNow, canClear: true }, [
+    const canPopout = Boolean(window.desktop?.openRoomWindow);
+    showContextMenu(event, { kind: 'conversation', pinned: target.pinned, muted: target.muted, unread: unreadNow, canClear: true, canPopout }, [
+      ...(canPopout ? [{ id: 'popout', label: '在独立窗口打开', action: () => openRoomWindow(target) }] : []),
       { id: unreadNow ? 'read' : 'unread', label: unreadNow ? '标为已读' : '标为未读', action: () => unreadNow ? markRead(target) : conversationAction('mark-unread', target.id, conversationScope) },
       { id: pin, label: target.pinned ? '取消置顶' : '置顶对话', action: () => conversationAction(pin, target.id, conversationScope) },
       { id: mute, label: target.muted ? '取消免打扰' : '消息免打扰', action: () => conversationAction(mute, target.id, conversationScope) },
@@ -678,7 +698,7 @@ export default function App() {
     return <button className={`conversation ${selected === target.id ? 'active' : ''} ${showUnread ? 'has-unread' : ''} ${target.muted ? 'muted' : ''} ${status?.mentioned ? 'mentioned' : ''} ${pinnedDrag.dragging === target.id ? 'dragging' : ''}`} key={target.id} data-room-id={target.id} aria-current={selected === target.id ? 'page' : undefined} aria-haspopup="menu"
       style={sortable ? pinnedDrag.styleFor(target.id) : undefined} aria-keyshortcuts={sortable ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
       onClick={() => { if (sortable && pinnedDrag.consumeClick()) return; if (!consumeLongPress(longPress)) openRoom(target.id); }} {...press}
-      onPointerDown={event => { press.onPointerDown(event); if (sortable) pinnedDrag.begin(event, target.id, pinnedIds); }}
+      onPointerDown={event => { press.onPointerDown(event); if (sortable) pinnedDrag.begin(event, target.id, pinnedIds); dragOut(event, target); }}
       onContextMenu={event => { if (longPress.current.fired) event.preventDefault(); else conversationMenu(event, target); }}
       onKeyDown={event => { if (sortable && pinnedDrag.keyMove(event, target.id, pinnedIds)) return; if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) { const rect = event.currentTarget.getBoundingClientRect(); conversationMenu(Object.assign(pressEvent(rect.left + 24, rect.bottom), { preventDefault: () => event.preventDefault() }), target); } }}>
       <span className="conversation-icon" title={compact ? target.name : undefined}>{roomIcon(target, 44)}{compact && showUnread && <i className="compact-dot" aria-hidden="true" />}</span><span className="conversation-copy"><span className="conversation-title"><span className="conversation-name">{target.name}</span>{target.kind === 'direct' && <StatusEmoji user={peerOf(target)} />}{target.pinned && <Pin className="conversation-pin" size={11} aria-label="已置顶" />}{target.muted && <BellOff className="conversation-pin" size={11} aria-label="免打扰" />}<time>{target.lastMessage ? formatTime(target.lastMessage.createdAt) : ''}</time></span>
@@ -735,7 +755,7 @@ export default function App() {
     if (!newDay && sameGroup(previous, message)) messageGroups.at(-1).messages.push(message);
     else messageGroups.push({ newDay, messages: [message] });
   }
-  return <>{appLock.locked && <LockScreen appLock={appLock} onLogout={logout} loggingOut={loggingOut} />}<div inert={appLock.locked} className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
+  return <>{appLock.locked && <LockScreen appLock={appLock} onLogout={logout} loggingOut={loggingOut} />}<div inert={appLock.locked} className={`app ${popoutRoom ? 'popout' : ''} ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
       <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />

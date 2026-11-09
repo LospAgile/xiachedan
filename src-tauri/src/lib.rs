@@ -21,6 +21,8 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const MAIN: &str = "main";
+// 会话独立窗口的标签前缀，后面接会话标识。
+const ROOM_WINDOW: &str = "room-";
 const SEEN_LIMIT: usize = 2000;
 // 更新签名公钥与发布仓库在构建时注入（见 .github/workflows/build.yml）；未注入公钥的构建不启用自动更新。
 const UPDATER_PUBKEY: Option<&str> = option_env!("LINLIAO_UPDATER_PUBKEY");
@@ -160,6 +162,8 @@ fn open_address(app: &AppHandle, desktop: &Desktop, origin: &str, fragment: Opti
     session.config.server = Some(origin.to_string());
     desktop.save(&session);
   }
+  // 换了空间，原来空间的会话独立窗口一起关掉。
+  for (label, window) in app.webview_windows() { if label.starts_with(ROOM_WINDOW) { let _ = window.close(); } }
   render(app, desktop);
   let url = Url::parse(&target).map_err(|error| error.to_string())?;
   main_window(app).ok_or("窗口不可用")?.navigate(url).map_err(|error| error.to_string())
@@ -478,6 +482,48 @@ fn desktop_open_url(app: AppHandle, webview: Webview, desktop: Shared<'_>, url: 
   Ok(true)
 }
 
+// 会话独立窗口：只显示一个会话的聊天，不注入桌面桥——通知、角标和原生菜单仍由主窗口负责，
+// 独立窗口里的页面按普通网页处理（登录状态与主窗口共用）。
+#[tauri::command]
+fn desktop_open_window(app: AppHandle, webview: Webview, desktop: Shared<'_>, room_id: String, title: String) -> Result<bool, String> {
+  require_trusted(&webview, &desktop)?;
+  if !valid_id(&room_id) || !room_id.chars().all(|char| char.is_ascii_alphanumeric() || char == '-') { return Err("会话无效".into()); }
+  let label = format!("{ROOM_WINDOW}{room_id}");
+  if let Some(window) = app.get_webview_window(&label) {
+    let _ = window.unminimize();
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())?;
+    return Ok(true);
+  }
+  let origin = desktop.session.lock().unwrap().active_origin.clone();
+  let start = Url::parse(&format!("{origin}/?popout={room_id}")).map_err(|_| "地址无效".to_string())?;
+  let navigation = desktop.inner().clone();
+  let title: String = title.chars().take(60).collect();
+  let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(start))
+    .title(if title.trim().is_empty() { "虾扯蛋".to_string() } else { title })
+    .inner_size(480.0, 720.0)
+    .min_inner_size(360.0, 480.0)
+    .background_color(tauri::window::Color(28, 28, 30, 255))
+    .on_navigation(move |url| {
+      let origin = navigation.session.lock().unwrap().active_origin.clone();
+      probe::same_origin(url.as_str(), &origin)
+    });
+  // 和主窗口一样：WKWebView 需要下载处理，文件存到「下载」文件夹。
+  #[cfg(target_os = "macos")]
+  let builder = {
+    let (handle, downloads) = (app.clone(), desktop.inner().clone());
+    builder.on_download(move |_webview, event| {
+      if let tauri::webview::DownloadEvent::Finished { path, success, .. } = event {
+        let name = path.as_ref().and_then(|path| path.file_name()).map(|name| name.to_string_lossy().into_owned());
+        emit(&handle, &downloads, "download", json!({ "name": name, "success": success }));
+      }
+      true
+    })
+  };
+  builder.build().map_err(|error| error.to_string())?;
+  Ok(true)
+}
+
 fn open_notification_settings(app: &AppHandle) -> Result<(), String> {
   let target = if cfg!(target_os = "macos") { "x-apple.systempreferences:com.apple.Notifications-Settings.extension" } else { "ms-settings:notifications" };
   app.opener().open_url(target, None::<&str>).map_err(|error| error.to_string())
@@ -649,7 +695,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![
       desktop_connect, desktop_home, desktop_copy, desktop_context_menu, desktop_ready, desktop_state, desktop_settings, desktop_activity,
-      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_update_check, desktop_update_install, desktop_identity, desktop_open_url
+      desktop_message, desktop_recalled, desktop_history_cleared, desktop_test_notification, desktop_notification_settings, desktop_appearance, desktop_drag, desktop_zoom, desktop_open_window, desktop_update_check, desktop_update_install, desktop_identity, desktop_open_url
     ])
     .setup(|app| {
       let handle = app.handle().clone();

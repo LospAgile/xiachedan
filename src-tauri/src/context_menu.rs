@@ -61,6 +61,8 @@ pub struct ContextMenuOptions {
   can_clear: bool,
   #[serde(default)]
   can_sticker: bool,
+  #[serde(default)]
+  can_popout: bool,
 }
 
 #[tauri::command]
@@ -79,6 +81,7 @@ pub async fn desktop_context_menu(app: AppHandle, webview: Webview, desktop: Sha
   let mut build = || -> tauri::Result<()> {
     match value.kind.as_str() {
       "conversation" => {
+        if value.can_popout { add("popout", "在独立窗口打开")?; }
         add(if value.unread { "read" } else { "unread" }, if value.unread { "标为已读" } else { "标为未读" })?;
         add(if value.pinned { "unpin" } else { "pin" }, if value.pinned { "取消置顶" } else { "置顶对话" })?;
         add(if value.muted { "unmute" } else { "mute" }, if value.muted { "取消免打扰" } else { "消息免打扰" })?;

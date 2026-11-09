@@ -1316,3 +1316,7 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .cropper-zoom { display: flex; align-items: center; gap: 8px; width: 280px; color: var(--text-2); }
 .cropper-zoom input { flex: 1; accent-color: var(--accent); }
 .quote-select { width: 100%; min-height: 120px; padding: 10px 12px; border-radius: 12px; background: var(--fill-1); font-size: 15px; line-height: 1.5; resize: none; -webkit-user-select: text; user-select: text; }
+
+/* 桌面端会话独立窗口：只留聊天区 */
+.app.popout .sidebar, .app.popout .mobile-tabs, .app.popout .chat-header .back-button { display: none !important; }
+.app.popout .chat-main { padding-left: 0; }

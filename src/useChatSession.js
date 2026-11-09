@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, socketUrl } from './api';
 import { socketProtocols } from './mobile/session';
 import { disablePush, pushId } from './push';
+import { popoutRoom } from './popout';
 import { chatPref } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { merge, previewText, sanitizeMessage, sanitizeState } from './history';
@@ -179,6 +180,8 @@ export default function useChatSession({ selected, notify, privacyRef, mutedRef,
     if (message.nudge && message.nudge.targetId !== current.me.id) return;
     // 提示音：正在看这个会话时不响；Windows 的系统通知自带声音，弹出时不重复响。
     const watching = activeRoom.current === message.roomId && document.hasFocus() && !document.hidden;
+    // 独立窗口不响也不弹通知，交给主窗口。
+    if (popoutRoom) return;
     const ring = () => { if (!watching && chatPref('sound')) playMessageSound(); };
     if (!window.desktop?.message) { ring(); return; }
     const sender = current.users.find(user => user.id === message.senderId);
