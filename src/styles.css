@@ -1306,3 +1306,12 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .app-lock-form { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .app-lock-form input { height: 36px; padding: 0 10px; border-radius: 10px; background: var(--fill-1); }
 @media (prefers-reduced-motion: no-preference) { .lock-screen { animation: panel-in 200ms var(--ease-out); } }
+
+/* 头像裁剪 */
+.avatar-cropper { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.cropper-stage { position: relative; overflow: hidden; border-radius: 16px; background: var(--fill-1); cursor: grab; touch-action: none; user-select: none; }
+.cropper-stage:active { cursor: grabbing; }
+.cropper-stage img { position: absolute; left: 50%; top: 50%; max-width: none; pointer-events: none; }
+.cropper-mask { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgba(0, 0, 0, .45); outline: 2px solid rgba(255, 255, 255, .8); pointer-events: none; }
+.cropper-zoom { display: flex; align-items: center; gap: 8px; width: 280px; color: var(--text-2); }
+.cropper-zoom input { flex: 1; accent-color: var(--accent); }

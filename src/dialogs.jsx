@@ -5,6 +5,7 @@ import { api, upload, formatSize, absoluteUrl, mediaUrl, formatTime } from './ap
 import { FormattedText } from './markdown';
 import { Modal, Avatar, AvatarPicker, IdentityFields } from './components';
 import { InvitationShare } from './Invitation';
+import AvatarCropper from './AvatarCropper';
 import { modKey } from './chatPrefs';
 
 export function ProfileDialog({ me, onClose, onUpdate, notify }) {
@@ -21,14 +22,20 @@ export function ProfileDialog({ me, onClose, onUpdate, notify }) {
     try { const { me: updated } = await api('profile', { name, avatar, department, bio, nameColor: color }); onUpdate(updated); onClose(); notify('个人资料已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  async function avatarUpload(file) {
+  // 选好图片先裁剪，再上传。
+  const [cropping, setCropping] = useState(null);
+  function chooseAvatar(file) {
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) return setError('头像不能超过 5 MB');
+    setError(''); setCropping(file);
+  }
+  async function avatarUpload(file) {
     setBusy(true); setError('');
     try { const result = await upload(file, { purpose: 'avatar' }); setAvatar(result.me.avatar); onUpdate(result.me); notify('头像已更新'); }
     catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { avatarUpload(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><span className="field-label">名字颜色</span><div className="accent-row name-colors" role="radiogroup" aria-label="名字颜色"><button type="button" role="radio" aria-checked={color === null} className={`name-color-auto ${color === null ? 'active' : ''}`} onClick={() => setColor(null)}>自动</button>{[0, 1, 2, 3, 4, 5, 6].map(index => <button type="button" key={index} role="radio" aria-checked={color === index} aria-label={`名字颜色 ${index + 1}`} className={`accent-swatch ${color === index ? 'active' : ''}`} style={{ background: `var(--name-${index})` }} onClick={() => setColor(index)} />)}<b className="name-color-preview" style={{ color: color === null ? 'var(--text-1)' : `var(--name-${color})` }}>{name || '名字'}</b></div><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>;
+  return <><Modal title="做自己，或者做只小猫" subtitle="昵称和头像，随时都能换一个心情。" onClose={onClose}><form onSubmit={save}><div className="profile-avatar"><Avatar user={{ avatar }} size={88} /><button type="button" className="secondary-button" onClick={() => fileInput.current.click()} disabled={busy}><Camera size={16} />上传头像</button><small>JPG、PNG、GIF、WebP · 最大 5 MB</small></div><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseAvatar(event.target.files[0]); event.target.value = ''; }} /><IdentityFields {...{ name, setName, avatar, setAvatar }} /><span className="field-label">名字颜色</span><div className="accent-row name-colors" role="radiogroup" aria-label="名字颜色"><button type="button" role="radio" aria-checked={color === null} className={`name-color-auto ${color === null ? 'active' : ''}`} onClick={() => setColor(null)}>自动</button>{[0, 1, 2, 3, 4, 5, 6].map(index => <button type="button" key={index} role="radio" aria-checked={color === index} aria-label={`名字颜色 ${index + 1}`} className={`accent-swatch ${color === index ? 'active' : ''}`} style={{ background: `var(--name-${index})` }} onClick={() => setColor(index)} />)}<b className="name-color-preview" style={{ color: color === null ? 'var(--text-1)' : `var(--name-${color})` }}>{name || '名字'}</b></div><label className="field-label" htmlFor="profile-department">部门（可选）</label><input id="profile-department" value={department} maxLength={40} placeholder="例如：设计部" onChange={event => setDepartment(event.target.value)} /><label className="field-label" htmlFor="profile-bio">签名（可选）</label><input id="profile-bio" value={bio} maxLength={120} placeholder="一句话介绍自己" onChange={event => setBio(event.target.value)} />{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy}>{busy ? '正在保存…' : '保存修改'}</button></div></form></Modal>
+    {cropping && <AvatarCropper file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); avatarUpload(cropped); }} />}</>;
 }
 
 export function InviteDialog({ cloud, onClose, notify }) {
@@ -59,8 +66,9 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
     if (!selected) return;
     if (selected.size > 5 * 1024 * 1024) return setError('群头像不能超过 5 MB');
     if (selected.type && !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(selected.type)) return setError('群头像请使用 JPG、PNG、GIF 或 WebP 图片');
-    setError(''); setFile(selected);
+    setError(''); setCropping(selected);
   };
+  const [cropping, setCropping] = useState(null);
   async function save(event) {
     event.preventDefault();
     if (busy || (!file && avatar === (room.avatar || null))) return;
@@ -72,13 +80,14 @@ export function RoomAvatarDialog({ room, onClose, onSaved, notify }) {
       await onSaved(); onClose(); notify('群头像已更新');
     } catch (error) { setError(error.message); } finally { setBusy(false); }
   }
-  return <Modal title="设置群头像" subtitle={room.name} onClose={() => { if (!busy) onClose(); }}><form className="room-avatar-form" onSubmit={save}>
+  return <><Modal title="设置群头像" subtitle={room.name} onClose={() => { if (!busy) onClose(); }}><form className="room-avatar-form" onSubmit={save}>
     <fieldset disabled={busy}><div className="profile-avatar">
       {file && preview ? <span className="avatar avatar-photo" style={{ width: 88, height: 88 }}><img src={preview} alt="待保存的群头像" /></span> : avatar ? <Avatar user={{ avatar }} size={88} /> : <span className="room-avatar room-avatar-preview">{room.kind === 'public' ? <Hash size={36} /> : <Users size={36} />}</span>}
       <div className="room-avatar-actions"><button type="button" className="secondary-button" onClick={() => fileInput.current.click()}><Camera size={16} />上传图片</button>{(file || avatar) && <button type="button" className="text-button" onClick={() => choose(null)}>恢复默认</button>}</div><small>JPG、PNG、GIF、WebP · 最大 5 MB</small>
     </div><input ref={fileInput} type="file" aria-label="上传群头像" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { chooseFile(event.target.files[0]); event.target.value = ''; }} /><AvatarPicker avatar={file ? null : avatar} setAvatar={choose} /></fieldset>
     {error && <p className="form-error" role="alert">{error}</p>}<div className="modal-footer"><button type="button" className="secondary-button" disabled={busy} onClick={onClose}>取消</button><button className="primary-button" disabled={busy || (!file && avatar === (room.avatar || null))}>{busy ? '正在保存…' : '保存头像'}</button></div>
-  </form></Modal>;
+  </form></Modal>
+    {cropping && <AvatarCropper title="裁剪群头像" file={cropping} onCancel={() => setCropping(null)} onDone={cropped => { setCropping(null); setFile(cropped); }} />}</>;
 }
 
 export function GroupDialog({ users, me, room, onClose, onCreated, notify }) {
