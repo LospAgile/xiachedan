@@ -11,6 +11,7 @@ import { readQuiet, saveQuiet, isQuiet } from './quiet';
 import { modKey } from './chatPrefs';
 import { playMessageSound } from './sound';
 import { disablePush, enablePush, needsHomeScreen, pushState, pushSupported } from './push';
+import { appLockSupported, LOCK_TIMEOUTS } from './AppLock';
 
 // 设置：左侧分类，右侧内容；窄屏时先选分类再进入内容页。
 const SECTIONS = [
@@ -43,7 +44,7 @@ function PushSettings({ settings, notify }) {
     <Switch label="手机推送" checked={enabled} disabled={busy} onChange={change} /></SettingRow>;
 }
 
-export function SettingsDialog({ phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
+export function SettingsDialog({ appLock, phrases, onPhrases, pushSettings, theme, onTheme, update, onUpdate, connected, me, workspace, onPassword, onEditProfile, onLogout, loggingOut, onCleared, onClose, notify, onAudit, onChanged, appearance, onAppearance, privateMode, onPrivateMode, chatPrefs, onChatPrefs, onShortcuts, keywords, onKeywords, onSetStatus }) {
   const cloud = workspace.mode === 'cloud';
   const [tab, setTab] = useState(() => SECTIONS.some(([id]) => id === sessionStorage.getItem('linliao.settingsTab')) ? sessionStorage.getItem('linliao.settingsTab') : 'account');
   const [paneOpen, setPaneOpen] = useState(false);
@@ -94,6 +95,7 @@ export function SettingsDialog({ phrases, onPhrases, pushSettings, theme, onThem
     </>,
     privacy: <>
       <SettingRow title="隐私模式" description="隐藏聊天内容，鼠标停留在消息上才显示并计为已读；也可以按 ⌘⇧P 切换。"><Switch label="隐私模式" checked={privateMode} onChange={onPrivateMode} /></SettingRow>
+      {appLock && <AppLockSettings appLock={appLock} notify={notify} onClose={onClose} />}
       {cloud && <DeviceSettings notify={notify} />}
     </>,
     space: <>
@@ -220,6 +222,41 @@ function WallpaperPicker({ appearance, onAppearance, theme, notify }) {
 }
 
 // 关键词提醒：消息里出现这些词时像被 @ 一样提醒（免打扰的会话也会提醒），在所有设备上生效。
+// 应用锁：设置本机密码和闲置多久后锁定；关闭时要先输入密码。
+function AppLockSettings({ appLock, notify, onClose }) {
+  const [form, setForm] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  if (!appLockSupported()) return <SettingRow title="应用锁" description="需要在桌面端或 HTTPS 网页里使用，局域网的 http 地址上不可用。" />;
+  async function submit(event) {
+    event.preventDefault(); setError('');
+    if (form.mode === 'enable') {
+      if (form.password.length < 4) return setError('密码至少 4 位');
+      if (form.password !== form.confirm) return setError('两次输入的密码不一样');
+      setBusy(true); await appLock.enable(form.password, form.minutes); setBusy(false);
+      notify('已开启应用锁'); setForm(null);
+    } else {
+      setBusy(true); const ok = await appLock.verify(form.password); setBusy(false);
+      if (!ok) return setError('密码不对');
+      appLock.disable(); notify('已关闭应用锁'); setForm(null);
+    }
+  }
+  return <section className="app-lock-settings">
+    <SettingRow title="应用锁" description={appLock.enabled ? `闲置或切到后台超过 ${LOCK_TIMEOUTS.find(([value]) => value === appLock.minutes)?.[1] || `${appLock.minutes} 分钟`} 后锁定，打开时也要先解锁。` : '离开一会儿，别人也看不到聊天。密码只存在这台设备上，不加密本机数据。'}>
+      <Switch label="应用锁" checked={appLock.enabled} onChange={value => { setError(''); setForm(value ? { mode: 'enable', password: '', confirm: '', minutes: 5 } : { mode: 'disable', password: '' }); }} /></SettingRow>
+    {appLock.enabled && !form && <div className="app-lock-row">
+      <label className="toggle-row">自动锁定<select aria-label="自动锁定" value={appLock.minutes} onChange={event => appLock.setMinutes(Number(event.target.value))}>{LOCK_TIMEOUTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <button type="button" className="secondary-button" onClick={() => { onClose(); appLock.lock(); }}>立即锁定</button></div>}
+    {form && <form className="app-lock-form" onSubmit={submit}>
+      <input type="password" aria-label={form.mode === 'enable' ? '设置密码' : '当前密码'} placeholder={form.mode === 'enable' ? '设置密码（至少 4 位）' : '输入当前密码以关闭'} autoComplete={form.mode === 'enable' ? 'new-password' : 'current-password'} autoFocus value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} />
+      {form.mode === 'enable' && <input type="password" aria-label="再输一次" placeholder="再输一次" autoComplete="new-password" value={form.confirm} onChange={event => setForm({ ...form, confirm: event.target.value })} />}
+      {form.mode === 'enable' && <label className="toggle-row">自动锁定<select aria-label="自动锁定时间" value={form.minutes} onChange={event => setForm({ ...form, minutes: Number(event.target.value) })}>{LOCK_TIMEOUTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="account-actions"><button type="button" className="secondary-button" onClick={() => setForm(null)}>取消</button><button className="primary-button" disabled={busy || !form.password}>{form.mode === 'enable' ? '开启' : '关闭应用锁'}</button></div>
+    </form>}
+  </section>;
+}
+
 // 常用语：在输入框的附件菜单或「/」菜单里一键插入；存在服务端，换设备也在。
 function PhraseSettings({ phrases, onChange, notify }) {
   const [input, setInput] = useState('');

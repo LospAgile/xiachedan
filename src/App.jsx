@@ -15,6 +15,7 @@ import usePinnedDrag from './usePinnedDrag';
 import useOutbox from './useOutbox';
 import { SettingsDialog } from './Settings';
 import { syncPush } from './push';
+import { useAppLock, LockScreen, finishLockReset } from './AppLock';
 import { messageLink, groupInviteLink } from './markdown';
 import useDesktopBridge from './useDesktopBridge';
 import useTheme from './useTheme';
@@ -152,6 +153,11 @@ export default function App() {
   }, [contextMenu, profileCard, readDetail, reactingTo, selection, showMembers, mobileChat, mobileTab]);
   const { privateMode, privacyRef, changePrivacy, windowActive } = useDesktopBridge({ notify, onPendingRoom: openRoom,
     onOpenRoom: roomId => { openRoom(roomId); setModal(null); setSearch(''); } });
+  // 应用锁：锁着时整个界面不可操作，通知也按隐私模式只显示「新消息」。
+  const appLock = useAppLock();
+  const lockedRef = useRef(false);
+  lockedRef.current = appLock.locked;
+  const noticePrivacy = useMemo(() => ({ get current() { return privacyRef.current || lockedRef.current; } }), [privacyRef]);
   const closeReadDetail = useCallback(() => setReadDetail(null), []);
   const onHistoryChanged = useCallback(({ cleared }) => {
     if (cleared) { setScrolledUp(false); sticky.current = true; }
@@ -160,7 +166,7 @@ export default function App() {
   // 免打扰只在本机生效，与置顶一样保存在会话偏好里；不弹通知，也不计入菜单栏和托盘的未读数。
   const mutedRooms = useRef(new Set());
   const { bootstrap, state, startupError, start, refresh, logout, loggingOut, messages, hasMore, loading, connected, historyVersion,
-    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally } = useChatSession({ selected, notify, privacyRef, mutedRef: mutedRooms, onHistoryChanged });
+    syncHistory, receive, markMessageRead, loadOlder: fetchOlder, loadThrough, updateMe, applyReactions, applyEdit, typing, sendTyping, pinsVersion, savedVersion, applyPoll, threadTick, applyNote, applyFolders, applyKeywords, applyPhrases, hideLocally } = useChatSession({ selected, notify, privacyRef: noticePrivacy, mutedRef: mutedRooms, onHistoryChanged });
   const { rooms: conversations, scope: conversationScope, restore: restoreConversation, act: conversationAction, reorder: reorderPinned } =
     useConversations({ state, spaceId: bootstrap?.spaceId, selected, onSelect: setSelected, notify });
   const pinnedDrag = usePinnedDrag(ids => reorderPinned(ids, conversationScope));
@@ -168,6 +174,7 @@ export default function App() {
   mutedRooms.current = new Set(conversations.filter(room => room.muted).map(room => room.id));
   // 手机推送按这台设备的免打扰和隐私模式过滤：变化后同步给服务端。
   const mutedKey = [...mutedRooms.current].sort().join(',');
+  useEffect(() => { if (bootstrap) finishLockReset(Boolean(state?.me), appLock); }, [bootstrap, state?.me?.id]);
   useEffect(() => { if (state?.me?.id) syncPush({ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }).catch(() => {}); }, [state?.me?.id, mutedKey, privateMode]);
   const messageContext = useRef();
   messageContext.current = { scope: conversationScope, messages, privateMode };
@@ -705,7 +712,7 @@ export default function App() {
     if (!newDay && sameGroup(previous, message)) messageGroups.at(-1).messages.push(message);
     else messageGroups.push({ newDay, messages: [message] });
   }
-  return <div className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
+  return <>{appLock.locked && <LockScreen appLock={appLock} onLogout={logout} loggingOut={loggingOut} />}<div inert={appLock.locked} className={`app ${privateMode ? 'privacy-on' : ''} ${nativeTitlebar ? 'native' : ''} ${mobileChat ? 'show-chat' : ''} ${compact ? 'compact-sidebar' : ''}`} style={{ '--sidebar': `${sidebarWidth}px` }} data-screen-label="虾扯蛋聊天空间">
     <aside className="sidebar glass" aria-label="会话列表" data-mobile-tab={mobileTab}>{resizer}
       <MobileHome tab={mobileTab} me={{ ...state.me, ...userMap[state.me.id] }} users={state.users} connected={connected} onDirect={directMessage} onAction={setModal} isAdmin={cloud && isAdmin} loggingOut={loggingOut} onLogout={logout} />
       <div className="sidebar-drag" data-drag-region aria-hidden="true" />
@@ -830,7 +837,7 @@ export default function App() {
     {modal === 'admin' && cloud && isAdmin && <AdminDialog me={state.me} onClose={() => setModal(null)} onUpdated={refresh} notify={notify} />}
     {modal === 'password' && <Modal title="修改密码" subtitle="修改后，其他设备需要重新登录。" onClose={() => setModal(null)}><PasswordForm onChanged={() => location.reload()} /></Modal>}
     {['group', 'addMembers'].includes(modal) && <GroupDialog users={state.users.filter(user => !user.removed)} me={state.me} room={modal === 'addMembers' ? room : null} onClose={() => setModal(null)} onCreated={async id => { await refresh(); openRoom(id); }} notify={notify} />}
-    {modal === 'connection' && <SettingsDialog pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
+    {modal === 'connection' && <SettingsDialog appLock={appLock} pushSettings={{ muted: mutedKey ? mutedKey.split(',') : [], private: privateMode }} phrases={state.phrases || []} onPhrases={async list => applyPhrases((await api('phrases', { phrases: list })).phrases)} onSetStatus={() => setModal('status')} keywords={state.keywords || []} onKeywords={async list => applyKeywords((await api('keywords', { keywords: list })).keywords)} onShortcuts={() => setModal('shortcuts')} chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} privateMode={privateMode} onPrivateMode={changePrivacy} onEditProfile={() => setModal('profile')} appearance={appearance} onAppearance={setAppearance} onChanged={refresh} onAudit={(cloud ? isAdmin : isOwner) ? () => setModal('audit') : undefined} theme={theme} onTheme={setTheme} update={update} onUpdate={setUpdate} connected={connected} me={state.me} workspace={state.workspace} onPassword={() => setModal('password')} onLogout={logout} loggingOut={loggingOut} onCleared={result => { syncHistory([], result.throughSeq); return refresh(); }} onClose={() => setModal(null)} notify={notify} />}
     {modal === 'members' && <Modal title="通讯录" subtitle={`${state.users.filter(user => !user.removed).length} 位成员，${online.length} 人在线。单击查看资料，双击直接私聊。`} onClose={() => setModal(null)} className="contacts-dialog">
       <label className="sidebar-search contacts-search"><Search size={14} /><input autoFocus aria-label="搜索成员" placeholder="搜索名字、部门或签名" value={contactQuery} onChange={event => setContactQuery(event.target.value)} /></label>
       <div className="space-members">{contactGroups.map(([department, members]) => <section key={department} aria-label={department}><h4 className="contacts-group">{department}<small>{members.length}</small></h4>{members.map(user => memberRow(user, 32, false, true))}</section>)}
@@ -920,5 +927,5 @@ export default function App() {
       if (recalling.text?.trim()) { setRecalledTexts(previous => ({ ...previous, [message.id]: { text: recalling.text } })); setTimeout(() => forgetRecalled(message.id), 10 * 60000); }
     }} />}
     {toastElement}
-  </div>;
+  </div></>;
 }
